@@ -2,6 +2,12 @@ from flask import Flask, jsonify, request, render_template
 
 from services.chat_service import process_message
 
+from services.monitoring import get_security_summary
+
+from services.monitoring import (
+    get_security_summary,
+    get_recent_events
+)
 
 app = Flask(__name__)
 
@@ -35,12 +41,37 @@ def chat():
             "error": "Message cannot be empty"
         }), 400
 
-    response = process_message(message)
+    # Temporary identity until Entra ID authentication is added
+    user_id = "local-user"
+
+    result = process_message(message, user_id)
+
+    if not result["allowed"]:
+        return jsonify({
+            "error": result["error"],
+            "reason": result["reason"]
+        }), result["status_code"]
 
     return jsonify({
-        "response": response
-    }), 200
+        "response": result["response"]
+    }), result["status_code"]
 
+
+@app.get("/monitoring/summary")
+def monitoring_summary():
+    summary = get_security_summary()
+
+    return jsonify(summary), 200
+
+@app.get("/monitoring/events")
+def monitoring_events():
+    events = get_recent_events()
+
+    return jsonify(events), 200
+
+@app.get("/monitoring")
+def monitoring_dashboard():
+    return render_template("monitoring.html")
 
 if __name__ == "__main__":
     app.run(debug=True)
