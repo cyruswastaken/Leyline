@@ -1,0 +1,21 @@
+Document Title: Internal Network Architecture Overview
+
+Document ID: RES-NETWORK-001
+
+Access Level: restricted
+
+This document describes internal network architecture information
+that is intended only for authorized infrastructure and security
+personnel.
+
+Internal services are separated into controlled network segments.
+
+Access between network segments is governed by centrally managed
+security controls.
+
+Administrative interfaces are restricted to authorized personnel
+and approved management networks.
+
+Detailed infrastructure addresses, credentials, and security
+configuration information must not be disclosed to unauthorized
+users.

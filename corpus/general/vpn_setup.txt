@@ -1,0 +1,21 @@
+Document Title: Corporate VPN Setup Guide
+
+Document ID: GEN-VPN-001
+
+Access Level: general
+
+The corporate VPN allows employees to securely access approved
+internal services while working outside the corporate network.
+
+To connect to the corporate VPN:
+
+1. Open the approved corporate VPN client.
+2. Enter the corporate VPN gateway provided by IT.
+3. Sign in using your corporate credentials.
+4. Complete multi-factor authentication if prompted.
+5. Verify that the VPN client reports a connected status.
+
+If the VPN connection fails, contact the IT Helpdesk.
+
+Employees should not share their VPN credentials or multi-factor
+authentication codes with anyone.

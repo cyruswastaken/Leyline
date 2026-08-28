@@ -1,0 +1,21 @@
+Document Title: IT Helpdesk Support Guide
+
+Document ID: GEN-IT-001
+
+Access Level: general
+
+The IT Helpdesk assists employees with common technical issues.
+
+Supported requests include:
+
+- VPN connection problems
+- Corporate account access
+- Password-reset assistance
+- Approved software installation
+- Workstation configuration issues
+
+When contacting the IT Helpdesk, employees should provide a clear
+description of the problem.
+
+Employees should never send passwords, authentication codes, or
+other sensitive credentials in support requests.

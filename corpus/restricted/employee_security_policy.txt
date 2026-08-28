@@ -1,0 +1,21 @@
+Document Title: Internal Employee Security Policy
+
+Document ID: RES-SECURITY-001
+
+Access Level: restricted
+
+This document contains internal security procedures intended for
+authorized security and IT personnel.
+
+Security incidents must be reported through the organization's
+approved incident-response process.
+
+Personnel investigating security incidents must preserve relevant
+logs and evidence.
+
+Security personnel should follow the organization's incident
+classification and escalation procedures when determining the
+appropriate response.
+
+This document should not be distributed outside authorized
+personnel.
