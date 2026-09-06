@@ -22,6 +22,8 @@ dist/
 .env.*
 *.local
 
+docs/*.txt
+
 *.log
 *.db
 *.sqlite
@@ -29,5 +31,4 @@ dist/
 
 .vscode/
 .idea/
-docs/
 logs/
