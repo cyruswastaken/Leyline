@@ -47,11 +47,12 @@ def log_security_event(
     event_type: str,
     user_id: str,
     status_code: int,
-    reason: str
+    reason: str,
+    details: dict | None = None
 ) -> None:
     """
-    Log a structured security event to both the terminal
-    and the persistent security log file.
+    Log a structured security or system event to both
+    the terminal and persistent security log file.
     """
 
     event = {
@@ -61,5 +62,8 @@ def log_security_event(
         "status_code": status_code,
         "reason": reason
     }
+
+    if details:
+        event["details"] = details
 
     logger.info(event)

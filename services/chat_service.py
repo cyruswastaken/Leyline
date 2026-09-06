@@ -1,7 +1,10 @@
 from services.logger import log_security_event
 from services.rate_limiter import rate_limiter
 from services.security import check_message
-from services.document_loader import load_documents
+from services.document_loader import (
+    load_documents,
+    chunk_document
+)
 from services.authorization import filter_authorized_documents
 from services.retrieval import retrieve_documents
 from services.LLM import generate_answer
@@ -13,12 +16,35 @@ def process_message(
     user_role: str
 ) -> dict:
     """
-    Process a user's chat message through the security,
-    authorization, and retrieval pipeline.
+    Process an employee request through the
+    secure Leyline pipeline.
+
+    Pipeline:
+
+    Rate limiting
+        ↓
+    Security validation
+        ↓
+    Document loading
+        ↓
+    Authorization
+        ↓
+    Chunking
+        ↓
+    Retrieval
+        ↓
+    Azure OpenAI
+        ↓
+    Grounded response
     """
 
-    # Layer 1: Rate limiting
-    if not rate_limiter.is_allowed(user_id):
+    # ==========================================
+    # 1. RATE LIMITING
+    # ==========================================
+
+    if not rate_limiter.is_allowed(
+        user_id
+    ):
 
         log_security_event(
             event_type="RATE_LIMIT_EXCEEDED",
@@ -29,13 +55,21 @@ def process_message(
 
         return {
             "allowed": False,
-            "error": "Too many requests. Please try again later.",
-            "reason": "rate_limit_exceeded",
+            "response": (
+                "Too many requests. "
+                "Please try again later."
+            ),
             "status_code": 429
         }
 
-    # Layer 2: Input security check
-    blocked_pattern = check_message(message)
+
+    # ==========================================
+    # 2. SECURITY VALIDATION
+    # ==========================================
+
+    blocked_pattern = check_message(
+        message
+    )
 
     if blocked_pattern:
 
@@ -43,32 +77,78 @@ def process_message(
             event_type="SECURITY_RULE_TRIGGERED",
             user_id=user_id,
             status_code=403,
-            reason="security_rule_triggered"
+            reason=blocked_pattern
         )
 
         return {
             "allowed": False,
-            "error": "Request not allowed.",
-            "reason": "security_rule_triggered",
+            "response": (
+                "Your request was blocked "
+                "by a security rule."
+            ),
             "status_code": 403
         }
 
-    # Layer 3: Load knowledge base
+
+    # ==========================================
+    # 3. LOAD DOCUMENTS
+    # ==========================================
+
     documents = load_documents()
 
-    # Layer 4: Authorization BEFORE retrieval
-    authorized_documents = filter_authorized_documents(
-        documents,
-        user_role
+
+    # ==========================================
+    # 4. AUTHORIZATION
+    # ==========================================
+    #
+    # IMPORTANT:
+    # Authorization happens BEFORE
+    # chunking and retrieval.
+    #
+    # Unauthorized documents therefore
+    # never reach the retrieval layer
+    # or the LLM.
+    #
+
+    authorized_documents = (
+        filter_authorized_documents(
+            documents,
+            user_role
+        )
     )
 
-    # Layer 5: Retrieve relevant documents
+
+    # ==========================================
+    # 5. CHUNK AUTHORIZED DOCUMENTS
+    # ==========================================
+
+    authorized_chunks = []
+
+    for document in authorized_documents:
+
+        chunks = chunk_document(
+            document
+        )
+
+        authorized_chunks.extend(
+            chunks
+        )
+
+
+    # ==========================================
+    # 6. RETRIEVAL
+    # ==========================================
+
     results = retrieve_documents(
         message,
-        authorized_documents
+        authorized_chunks
     )
 
-    # No relevant knowledge found
+
+    # ==========================================
+    # 7. NO RESULTS
+    # ==========================================
+
     if not results:
 
         log_security_event(
@@ -81,32 +161,75 @@ def process_message(
         return {
             "allowed": True,
             "response": (
-                "I couldn't find relevant information "
-                "in the available knowledge base."
+                "I couldn't find relevant "
+                "information in the available "
+                "knowledge base."
             ),
             "status_code": 200
         }
 
-    # Layer 6: Select the most relevant document
-    best_document = results[0]
 
-    context = best_document["content"]
-    source = best_document["title"]
+    # ==========================================
+    # 8. BUILD LLM CONTEXT
+    # ==========================================
+    #
+    # Instead of sending only results[0],
+    # combine the retrieved authorized chunks.
+    #
 
-    # Layer 7: Generate response
+    context_parts = []
+    source_parts = []
+
+    for document in results:
+
+        context_parts.append(
+            f"""
+Source: {document["title"]}
+
+{document["content"]}
+"""
+        )
+
+        source_parts.append(
+            document["title"]
+        )
+
+
+    context = "\n\n".join(
+        context_parts
+    )
+
+    source = ", ".join(
+        dict.fromkeys(source_parts)
+    )
+
+
+    # ==========================================
+    # 9. GENERATE GROUNDED ANSWER
+    # ==========================================
+
     response = generate_answer(
         query=message,
         context=context,
         source=source
     )
 
-    # Log successful request
+
+    # ==========================================
+    # 10. LOG SUCCESSFUL REQUEST
+    # ==========================================
+
     log_security_event(
         event_type="NORMAL_REQUEST",
         user_id=user_id,
         status_code=200,
         reason="request_allowed"
     )
+
+
+    # ==========================================
+    # 11. RETURN RESPONSE
+    # ==========================================
 
     return {
         "allowed": True,

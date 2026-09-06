@@ -44,7 +44,9 @@ def get_security_summary() -> dict:
         "total_events": len(events),
         "normal_requests": 0,
         "security_rules_triggered": 0,
-        "rate_limits_exceeded": 0
+        "rate_limits_exceeded": 0,
+        "retrieval_requests": 0,
+        "no_results_found": 0
     }
 
     for event in events:
@@ -58,6 +60,12 @@ def get_security_summary() -> dict:
 
         elif event_type == "RATE_LIMIT_EXCEEDED":
             summary["rate_limits_exceeded"] += 1
+
+        elif event_type == "RETRIEVAL":
+            summary["retrieval_requests"] += 1
+
+        elif event_type == "NO_RESULTS_FOUND":
+            summary["no_results_found"] += 1
 
     return summary
 
