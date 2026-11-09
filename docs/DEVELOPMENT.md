@@ -38,6 +38,14 @@ docker build -t leyline:dev .
 policy blocks compiled extensions, install the pure-Python build with
 `pip install --no-binary mypy --force-reinstall mypy`.
 
+## Tests
+
+The suite needs no running services: Redis is replaced by `fakeredis` and the identity provider by a fake client, so `pytest` is fast and hermetic. Shared personas and helpers are in `tests/support.py`; `login_as(client, principal)` creates a real server-side session without going through an identity provider.
+
+- `test_access_matrix.py` is the single declaration of who may call which route and fails if a route has no declared policy. **Add every new route there.**
+- `test_regressions.py` holds one test per audited vulnerability.
+- What fakes cannot prove (Authlib's token verification, Keycloak claim mapping) is covered by `python scripts/e2e_login.py` against the running compose stack; CI runs it on every push.
+
 ## Dependencies
 
 `pyproject.toml` declares dependency ranges. `requirements.txt` is the pinned

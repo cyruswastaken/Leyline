@@ -1,16 +1,24 @@
 import time
 from typing import Any
 
+from leyline.auth.principal import Principal
+from leyline.config import Settings
+from leyline.ratelimit import RedisRateLimiter
 from leyline.services.authorization import filter_authorized_documents
 from leyline.services.document_loader import chunk_document, load_documents
 from leyline.services.llm import generate_answer
 from leyline.services.logger import log_security_event
-from leyline.services.rate_limiter import rate_limiter
 from leyline.services.retrieval import retrieve_documents
 from leyline.services.security import check_message
 
 
-def process_message(message: str, user_id: str, user_role: str) -> dict[str, Any]:
+def process_message(
+    message: str,
+    principal: Principal,
+    *,
+    rate_limiter: RedisRateLimiter,
+    settings: Settings,
+) -> dict[str, Any]:
     """
     Process an employee request through the
     secure Leyline pipeline.
@@ -38,7 +46,13 @@ def process_message(message: str, user_id: str, user_role: str) -> dict[str, Any
     # 1. RATE LIMITING
     # ==========================================
 
-    if not rate_limiter.is_allowed(user_id):
+    user_id = principal.user_id
+
+    if not rate_limiter.is_allowed(
+        f"user:{user_id}",
+        limit=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    ):
         log_security_event(
             event_type="RATE_LIMIT_EXCEEDED",
             user_id=user_id,
@@ -93,7 +107,11 @@ def process_message(message: str, user_id: str, user_role: str) -> dict[str, Any
     # or the LLM.
     #
 
-    authorized_documents = filter_authorized_documents(documents, user_role)
+    authorized_documents = filter_authorized_documents(
+        documents,
+        principal,
+        restricted_groups=settings.restricted_groups,
+    )
 
     # ==========================================
     # 5. CHUNK AUTHORIZED DOCUMENTS

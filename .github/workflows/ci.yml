@@ -55,25 +55,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build image
-        run: docker build -t leyline:ci .
+      - name: Start app, Redis and Keycloak
+        run: docker compose up -d --build --wait --wait-timeout 240
 
       - name: Smoke test
         run: |
-          docker run -d --name leyline -p 8000:8000 \
-            -e LEYLINE_ENV=local leyline:ci
-          for i in $(seq 1 20); do
-            if curl -fs http://127.0.0.1:8000/healthz; then break; fi
-            sleep 1
-          done
-          curl -fs http://127.0.0.1:8000/healthz
-          test "$(docker exec leyline id -u)" != "0"
-          test "$(curl -s -o /dev/null -w '%{http_code}' \
-            http://127.0.0.1:8000/documents)" = "404"
+          base=http://127.0.0.1:8000
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+
+          test "$(code $base/healthz)" = "200"
+          # readiness is 503 here: no model credentials are configured
+          test "$(code $base/readyz)" = "503"
+          curl -s $base/readyz | grep -q '"redis_reachable":true'
+          curl -s $base/readyz | grep -q '"oidc_configured":true'
+
+          # anonymous callers are turned away
+          test "$(code -H 'Accept: application/json' $base/me)" = "401"
+          test "$(code -H 'Accept: application/json' $base/monitoring/events)" = "401"
+          test "$(code -X POST $base/chat)" = "401"
+          test "$(code $base/documents)" = "404"
+
+          # browsers are sent to the identity provider with PKCE
+          loc=$(curl -s -o /dev/null -w '%{redirect_url}' -H 'Accept: text/html' $base/)
+          test "$loc" = "$base/login?next=/"
+          idp=$(curl -s -o /dev/null -w '%{redirect_url}' $base/login)
+          echo "$idp" | grep -q 'code_challenge_method=S256'
+          echo "$idp" | grep -q 'state='
+          echo "$idp" | grep -q 'nonce='
+
+          # the container does not run as root
+          test "$(docker compose exec -T app id -u)" != "0"
+
+      - name: Full login against Keycloak, per persona
+        run: |
+          pip install requests
+          python scripts/e2e_login.py
 
       - name: Production mode refuses to start unconfigured
         run: |
-          if docker run --rm leyline:ci; then
-            echo "expected startup failure without model configuration"
+          if docker run --rm leyline-app:latest; then
+            echo "expected startup failure without model/identity configuration"
             exit 1
           fi
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

@@ -1,0 +1,146 @@
+{
+  "realm": "leyline",
+  "displayName": "Leyline (local development)",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 43200,
+  "roles": {
+    "client": {
+      "leyline-web": [
+        { "name": "kb_admin", "description": "Manage knowledge-base documents" },
+        { "name": "support_agent", "description": "Work escalated helpdesk tickets" },
+        { "name": "security_auditor", "description": "View security monitoring and audit data" }
+      ]
+    }
+  },
+  "groups": [
+    { "name": "staff" },
+    { "name": "security" },
+    { "name": "hr" },
+    { "name": "finance" }
+  ],
+  "clients": [
+    {
+      "clientId": "leyline-web",
+      "name": "Leyline web application",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "leyline-dev-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:8000/auth/callback",
+        "http://localhost:8000/auth/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://127.0.0.1:8000/*##http://localhost:8000/*"
+      },
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "app-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "usermodel.clientRoleMapping.clientId": "leyline-web",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice.employee",
+      "email": "alice.employee@leyline.test",
+      "firstName": "Alice",
+      "lastName": "Employee",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/staff"],
+      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+    },
+    {
+      "username": "sam.security",
+      "email": "sam.security@leyline.test",
+      "firstName": "Sam",
+      "lastName": "Security",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/staff", "/security"],
+      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+    },
+    {
+      "username": "ada.auditor",
+      "email": "ada.auditor@leyline.test",
+      "firstName": "Ada",
+      "lastName": "Auditor",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/staff"],
+      "clientRoles": { "leyline-web": ["security_auditor"] },
+      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+    },
+    {
+      "username": "kim.admin",
+      "email": "kim.admin@leyline.test",
+      "firstName": "Kim",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/staff"],
+      "clientRoles": { "leyline-web": ["kb_admin"] },
+      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+    },
+    {
+      "username": "sue.agent",
+      "email": "sue.agent@leyline.test",
+      "firstName": "Sue",
+      "lastName": "Agent",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/staff"],
+      "clientRoles": { "leyline-web": ["support_agent"] },
+      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+    },
+    {
+      "username": "hank.hr",
+      "email": "hank.hr@leyline.test",
+      "firstName": "Hank",
+      "lastName": "HR",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/staff", "/hr"],
+      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+    }
+  ]
+}

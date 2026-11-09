@@ -1,23 +1,34 @@
 # Local development stack.
 #
-#   docker compose up --build                  # app only
-#   docker compose --profile infra up --build  # app + Postgres, Redis,
-#                                              # Keycloak, Azurite, Jaeger
+#   docker compose up --build                  # app + Redis + Keycloak
+#   docker compose --profile infra up --build  # + Postgres, Azurite, Jaeger
+#                                              # (not used by the app yet)
 #
-# The infra services are not used by the app yet; they arrive with
-# Phases 1-3 of the plan. All credentials here are throwaway local-dev
-# values and every port is bound to loopback only.
+# All credentials here are throwaway local-dev values and every published
+# port is bound to loopback only. Sign in at http://localhost:8000/ with a
+# demo user from deploy/keycloak/leyline-realm.json (password: Leyline-dev-1!).
 
 name: leyline
 
 services:
   app:
     build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
     environment:
       # The image defaults to production, which refuses to start without
       # model credentials. Locally the app starts and /readyz reports
       # not-ready until they are provided in .env.
       LEYLINE_ENV: local
+      REDIS_URL: redis://redis:6379/0
+      # Server-to-server calls use the compose network name; the browser is
+      # sent to Keycloak's public URL (see KC_HOSTNAME below).
+      OIDC_METADATA_URL: http://keycloak:8080/realms/leyline/.well-known/openid-configuration
+      OIDC_CLIENT_ID: leyline-web
+      OIDC_CLIENT_SECRET: leyline-dev-secret-change-me
     env_file:
       - path: .env
         required: false
@@ -31,6 +42,47 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+
+  redis:
+    image: redis:7.4-alpine
+    # Sessions and rate-limit counters only; losing them just signs people out.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev-only
+      # Issuer and browser-facing URLs use localhost:8080; back-channel calls
+      # (token, JWKS) are answered on whatever host the caller used, so the
+      # app container can reach http://keycloak:8080 without an issuer clash.
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./deploy/keycloak/leyline-realm.json:/opt/keycloak/data/import/leyline-realm.json:ro
+    healthcheck:
+      # The image has no curl; probe the readiness endpoint over a raw socket.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"status": "UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   postgres:
     profiles: [infra]
@@ -48,27 +100,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  redis:
-    profiles: [infra]
-    image: redis:7.4-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  keycloak:
-    profiles: [infra]
-    image: quay.io/keycloak/keycloak:26.0
-    command: start-dev
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev-only
-    ports:
-      - "127.0.0.1:8080:8080"
 
   azurite:
     profiles: [infra]

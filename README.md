@@ -7,10 +7,11 @@ This is a portfolio project being built to production standards. The included do
 ## What the project demonstrates
 
 - Retrieval grounded in a local enterprise document corpus
-- Role-based document authorization
-- Input security checks and per-user rate limiting
+- Sign-in with OpenID Connect (Keycloak locally, Microsoft Entra ID on Azure), server-side sessions, CSRF and CSP protection
+- Group-based document authorization enforced before retrieval
+- Input security checks and distributed (Redis) rate limiting
 - Responses constrained to authorized context
-- Security event logging and monitoring endpoints
+- Security event logging and an auditor-only monitoring dashboard
 - A deployment path for Azure App Service, Azure OpenAI, and Microsoft Entra ID
 
 ## Documentation
@@ -28,7 +29,8 @@ This is a portfolio project being built to production standards. The included do
 - Python 3.11+ (container: 3.13)
 - Flask
 - Azure OpenAI
-- Microsoft Entra ID
+- Microsoft Entra ID (Keycloak for local development)
+- Redis (sessions, rate limits)
 - Azure Blob Storage and Azure AI Search for the cloud deployment model
 - Vanilla JavaScript and server-rendered HTML
 - Docker, GitHub Actions, pytest, ruff, mypy
@@ -40,6 +42,7 @@ This is a portfolio project being built to production standards. The included do
 ├── src/leyline/
 │   ├── app.py          # create_app() factory
 │   ├── config.py       # validated settings
+│   ├── auth/           # principal, sessions, OIDC, CSRF, access control
 │   ├── web/            # Flask blueprints
 │   ├── services/       # pipeline logic
 │   └── templates/
@@ -48,6 +51,7 @@ This is a portfolio project being built to production standards. The included do
 │   └── restricted/
 ├── tests/
 ├── docs/
+├── deploy/keycloak/    # local identity provider realm
 ├── Dockerfile
 ├── compose.yaml
 └── pyproject.toml
@@ -55,7 +59,7 @@ This is a portfolio project being built to production standards. The included do
 
 ## Project status
 
-Leyline is under active development and is **not yet safe for real data**: there is no authentication yet. Phase 0 (security fixes, tests, CI, container) is complete; Phase 1 (identity and access) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
+Leyline is under active development and is **not yet safe for real data**. Phase 0 (security fixes, tests, CI, container) and Phase 1 (identity and access) are complete; Phase 2 (database and document ingestion) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
 
 ## License
 

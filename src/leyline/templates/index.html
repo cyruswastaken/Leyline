@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Secure Enterprise Helpdesk</title>
 
-    <style>
+    <style nonce="{{ csp_nonce }}">
         * {
             box-sizing: border-box;
         }
@@ -37,6 +38,31 @@
             padding: 20px;
             background: #1f2937;
             color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .user-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        #signout-button {
+            padding: 6px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 6px;
+            background: transparent;
+            color: white;
+            cursor: pointer;
+        }
+
+        #signout-button:hover {
+            background: rgba(255, 255, 255, 0.15);
         }
 
         .chat-header h1 {
@@ -111,8 +137,14 @@
     <div class="chat-container">
 
         <div class="chat-header">
-            <h1>Secure Enterprise Helpdesk</h1>
-            <p>AI-powered internal support assistant</p>
+            <div>
+                <h1>Secure Enterprise Helpdesk</h1>
+                <p>AI-powered internal support assistant</p>
+            </div>
+            <div class="user-bar">
+                <span id="user-name">{{ user.name or user.email or "Signed in" }}</span>
+                <button id="signout-button" type="button">Sign out</button>
+            </div>
         </div>
 
         <div class="messages" id="messages">
@@ -138,7 +170,8 @@
         </div>
 
     </div>
-    <script>
+    <script nonce="{{ csp_nonce }}">
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
     const messagesContainer = document.getElementById("messages");
     const messageInput = document.getElementById("message-input");
     const sendButton = document.getElementById("send-button");
@@ -180,12 +213,19 @@
             const response = await fetch("/chat", {
                 method: "POST",
                 headers: {
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": csrfToken
                 },
                 body: JSON.stringify({
                     message: message
                 })
             });
+
+            if (response.status === 401) {
+                // Session expired: sign in again.
+                window.location.assign("/login?next=/");
+                return;
+            }
 
             const data = await response.json();
 
@@ -215,6 +255,23 @@
 
 
     sendButton.addEventListener("click", sendMessage);
+
+
+    document.getElementById("signout-button").addEventListener(
+        "click",
+        async function () {
+            try {
+                const response = await fetch("/logout", {
+                    method: "POST",
+                    headers: { "X-CSRF-Token": csrfToken }
+                });
+                const data = await response.json();
+                window.location.assign(data.redirect || "/");
+            } catch (error) {
+                window.location.assign("/");
+            }
+        }
+    );
 
 
     messageInput.addEventListener("keydown", function (event) {

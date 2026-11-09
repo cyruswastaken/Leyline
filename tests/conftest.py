@@ -1,15 +1,32 @@
-import os
-import tempfile
-
+import fakeredis
 import pytest
 
-# Configuration is read when modules are imported, so test values must be
-# in the environment first. No real model calls are made in tests.
-os.environ["LEYLINE_ENV"] = "test"
-os.environ["AZURE_OPENAI_ENDPOINT"] = "https://example.invalid/"
-os.environ["AZURE_OPENAI_API_KEY"] = "test-key"
-os.environ["AZURE_OPENAI_DEPLOYMENT"] = "test-deployment"
-os.environ["LOG_DIR"] = tempfile.mkdtemp(prefix="leyline-test-logs-")
+from leyline.app import create_app
+from tests.support import PERSONAS, login_as, make_settings  # sets test env first
+
+
+@pytest.fixture
+def redis():
+    client = fakeredis.FakeRedis(decode_responses=True)
+    yield client
+    client.flushall()
+
+
+@pytest.fixture
+def settings():
+    return make_settings()
+
+
+@pytest.fixture
+def app(settings, redis, llm_calls):
+    flask_app = create_app(settings, redis_client=redis)
+    flask_app.config.update(TESTING=True)
+    return flask_app
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
 
 
 @pytest.fixture
@@ -28,14 +45,26 @@ def llm_calls(monkeypatch):
 
 
 @pytest.fixture
-def client(llm_calls, monkeypatch):
-    from leyline.app import create_app
-    from leyline.services.rate_limiter import rate_limiter
+def events(monkeypatch):
+    """Record every security event instead of writing it to the log file."""
+    recorded = []
 
-    rate_limiter.requests.clear()
+    def record(**kwargs):
+        recorded.append(kwargs)
 
-    app = create_app()
-    app.config.update(TESTING=True)
-    with app.test_client() as test_client:
-        yield test_client
-    rate_limiter.requests.clear()
+    for target in (
+        "leyline.services.chat_service",
+        "leyline.web.auth",
+        "leyline.auth.access",
+        "leyline.app",
+    ):
+        monkeypatch.setattr(f"{target}.log_security_event", record)
+    return recorded
+
+
+@pytest.fixture
+def login(client):
+    def _login(persona: str) -> str:
+        return login_as(client, PERSONAS[persona])
+
+    return _login

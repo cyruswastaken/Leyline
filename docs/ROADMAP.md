@@ -36,7 +36,7 @@ Found by reading the code in the initial review (2026-11-09). Items marked **Fix
 | 6 | Stored XSS: log fields go into `innerHTML` on the admin dashboard | `templates/monitoring.html:1003` |
 | 7 | A document body line starting `Access Level:` overwrites the header, so content can **downgrade its own classification** | `services/document_loader.py:45` |
 
-**Phase 0 status:** items 1, 2, 3, 6 and 7 are **fixed** with regression tests (`tests/test_regressions.py`). Items 4 and 5 need real authentication and are scheduled for Phase 1.
+**Status:** items 1, 2, 3, 6 and 7 were **fixed in Phase 0** and items 4 and 5 (no authentication, public monitoring) in **Phase 1**, all with regression tests (`tests/test_regressions.py`, `tests/test_access_matrix.py`).
 
 ### Bugs: these work differently from what the docs claim
 - **Rate limits and blocked requests return 500, not 429/403.** `chat_service` returns no `error` or `reason` keys, so `app.py:59` raises `KeyError`. The event is still logged, so the dashboard looks fine.
@@ -56,7 +56,7 @@ Found by reading the code in the initial review (2026-11-09). Items marked **Fix
 - No tests, CI, Dockerfile, migrations, database or IaC. `openai` is unpinned, `python-dotenv` is listed twice.
 - Doc drift: `docs/rag-helpdesk-lab-guide.txt` is referenced throughout but gitignored and not on disk; README says MIT but there is no LICENSE; Python 3.11 in docs, 3.14 on this machine.
 
-**Phase 0 status:** the corpus is still loaded per request (Phase 2), the rate limiter is now thread-safe but still in-process (Phase 1), and the log-file monitoring remains (Phase 6). Dependencies are pinned, tests, CI, a Dockerfile and compose now exist, and docs have been corrected; the missing lab guide is replaced in Phase 7.
+**Status:** the corpus is still loaded per request (Phase 2), the rate limiter is now Redis-backed and shared across instances (Phase 1), and the log-file monitoring remains (Phase 6). Dependencies are pinned, tests, CI, a Dockerfile and compose now exist, and docs have been corrected; the missing lab guide is replaced in Phase 7.
 
 ## Target architecture
 
@@ -122,6 +122,8 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 - Seed Keycloak with demo users and groups (HR, Finance, Security, staff).
 
 **Done when:** a matrix test proves every role against every route, for both allowed and denied paths.
+
+**Phase 1 status: complete.** Delivered as specified, plus: the route matrix fails when a route has no declared policy; sessions have idle and absolute timeouts, rotate at login, and fail closed (503) when Redis is down; CSP uses per-request nonces; and `scripts/e2e_login.py` (run in CI) drives the real login flow against Keycloak for every demo user. Two items moved: per-request re-authorization against the database (to limit group-revocation lag) lands with Postgres in Phase 2, and Entra group-overage resolution via Microsoft Graph lands in Phase 7.
 
 ### Phase 2: Data and ingestion (about 2 weeks)
 - Alembic migrations for `documents`, `document_versions`, `document_acl`, `chunks`, `ingestion_jobs`, `conversations`, `messages`, `feedback`, `tickets`, `ticket_events`, `audit_events`.

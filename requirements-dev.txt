@@ -1,7 +1,9 @@
 -r requirements.txt
 coverage==7.17.2
+fakeredis==2.40.0
 mypy==2.4.1
 pre-commit==4.7.0
 pytest==9.2.0
 pytest-cov==7.1.0
 ruff==0.17.4
+sortedcontainers==2.4.0

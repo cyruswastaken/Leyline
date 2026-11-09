@@ -1,20 +1,28 @@
 from flask import Blueprint, jsonify, render_template, request
 from flask.typing import ResponseReturnValue
 
-from leyline.config import get_settings
+from leyline.auth.access import (
+    current_principal,
+    login_required,
+    require_principal,
+)
+from leyline.extensions import app_settings, rate_limiter
 from leyline.services.chat_service import process_message
 
 bp = Blueprint("chat", __name__)
 
 
 @bp.get("/")
+@login_required
 def index() -> ResponseReturnValue:
-    return render_template("index.html")
+    return render_template("index.html", user=current_principal())
 
 
 @bp.post("/chat")
+@login_required
 def chat() -> ResponseReturnValue:
-    max_length = get_settings().max_message_length
+    settings = app_settings()
+    principal = require_principal()
 
     data = request.get_json(silent=True)
 
@@ -31,17 +39,20 @@ def chat() -> ResponseReturnValue:
     if not message:
         return jsonify({"error": "Message cannot be empty"}), 400
 
+    max_length = settings.max_message_length
     if len(message) > max_length:
         return jsonify(
             {"error": (f"Message is too long (maximum {max_length} characters)")}
         ), 400
 
-    # Temporary identity until authentication is implemented (Phase 1).
-    # Identity must never be taken from request input.
-    user_id = "local-user"
-    user_role = "employee"
-
-    result = process_message(message, user_id, user_role)
+    # Identity is the verified principal from the server-side session,
+    # never anything supplied in the request.
+    result = process_message(
+        message,
+        principal,
+        rate_limiter=rate_limiter(),
+        settings=settings,
+    )
 
     if not result["allowed"]:
         return jsonify(

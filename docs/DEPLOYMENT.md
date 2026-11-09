@@ -9,8 +9,8 @@ The recommended cloud architecture uses Azure App Service, Microsoft Entra ID, A
 3. Create Blob Storage and upload the `corpus/general` and `corpus/restricted` documents.
 4. Create the Azure OpenAI resource and deploy a supported chat model and embedding model.
 5. Create Azure AI Search, define a filterable access field, and index the corpus.
-6. Create the Linux App Service and configure Easy Auth with Entra ID.
-7. Configure application settings and deploy the Flask application.
+6. Register an Entra application for Leyline (redirect URI `https://<host>/auth/callback`), add the `groups` and `roles` claims, and create app roles matching `user`, `kb_admin`, `support_agent` and `security_auditor`.
+7. Create Azure Cache for Redis and the Linux App Service, then configure application settings and deploy the container.
 8. Send diagnostic logs to Log Analytics and validate the security test matrix.
 
 A step-by-step, infrastructure-as-code deployment replaces the earlier portal walkthrough in Phase 7 of the [roadmap](ROADMAP.md). Nothing below has been deployed yet.
@@ -25,12 +25,19 @@ For the current application code, configure (see [`.env.example`](../.env.exampl
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key (move to Key Vault / managed identity) |
 | `AZURE_OPENAI_DEPLOYMENT` | Chat model deployment name |
+| `OIDC_METADATA_URL` | Entra discovery URL, `https://login.microsoftonline.com/<tenant>/v2.0/.well-known/openid-configuration` |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | Entra app registration (secret to Key Vault) |
+| `OIDC_GROUPS_CLAIM` / `OIDC_ROLES_CLAIM` | Claim names (`groups` / `roles`) |
+| `REDIS_URL` | `rediss://:<key>@<name>.redis.cache.windows.net:6380/0` |
+| `SESSION_COOKIE_SECURE` | Must be `true` in production |
+| `TRUSTED_PROXY_COUNT` | Reverse proxies in front of the app (1 on App Service) |
+| `RESTRICTED_ACCESS_GROUPS` | Group id(s) that may read `restricted` documents (interim, until Phase 2) |
 
-In production mode the app refuses to start if the model settings are missing or `FLASK_DEBUG` is on. Use `/healthz` as the liveness probe and `/readyz` as the readiness probe.
+In production mode the app refuses to start if the model or identity settings are missing, cookies are not secure, or `FLASK_DEBUG` is on. Use `/healthz` as the liveness probe and `/readyz` as the readiness probe (it also checks Redis).
 
 ## Container
 
-The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI. Do not deploy the current version beyond a private test: it has no authentication yet.
+The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI with the full sign-in flow against Keycloak. Entra-specific behavior (group overage, app roles) is not yet tested against a real tenant; that happens in Phase 7.
 
 ## Monitoring
 
