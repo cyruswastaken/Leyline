@@ -56,7 +56,7 @@ Found by reading the code in the initial review (2026-11-09). Items marked **Fix
 - No tests, CI, Dockerfile, migrations, database or IaC. `openai` is unpinned, `python-dotenv` is listed twice.
 - Doc drift: `docs/rag-helpdesk-lab-guide.txt` is referenced throughout but gitignored and not on disk; README says MIT but there is no LICENSE; Python 3.11 in docs, 3.14 on this machine.
 
-**Status:** the corpus is still loaded per request (Phase 2), the rate limiter is now Redis-backed and shared across instances (Phase 1), and the log-file monitoring remains (Phase 6). Dependencies are pinned, tests, CI, a Dockerfile and compose now exist, and docs have been corrected; the missing lab guide is replaced in Phase 7.
+**Status:** the corpus is no longer re-read per request (documents are indexed once into Postgres, Phase 2), the rate limiter is now Redis-backed and shared across instances (Phase 1), and the log-file monitoring remains (Phase 6). Dependencies are pinned, tests, CI, a Dockerfile and compose now exist, and docs have been corrected; the missing lab guide is replaced in Phase 7.
 
 ## Target architecture
 
@@ -123,10 +123,10 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Done when:** a matrix test proves every role against every route, for both allowed and denied paths.
 
-**Phase 1 status: complete.** Delivered as specified, plus: the route matrix fails when a route has no declared policy; sessions have idle and absolute timeouts, rotate at login, and fail closed (503) when Redis is down; CSP uses per-request nonces; and `scripts/e2e_login.py` (run in CI) drives the real login flow against Keycloak for every demo user. Two items moved: per-request re-authorization against the database (to limit group-revocation lag) lands with Postgres in Phase 2, and Entra group-overage resolution via Microsoft Graph lands in Phase 7.
+**Phase 1 status: complete.** Delivered as specified, plus: the route matrix fails when a route has no declared policy; sessions have idle and absolute timeouts, rotate at login, and fail closed (503) when Redis is down; CSP uses per-request nonces; and `scripts/e2e_login.py` (run in CI) drives the real login flow against Keycloak for every demo user. Two items moved: per-request re-authorization against the database landed in Phase 2 (it applies *document-side* changes immediately; a user's own group changes still lag until their session ends, which is documented), and Entra group-overage resolution via Microsoft Graph lands in Phase 7.
 
 ### Phase 2: Data and ingestion (about 2 weeks)
-- Alembic migrations for `documents`, `document_versions`, `document_acl`, `chunks`, `ingestion_jobs`, `conversations`, `messages`, `feedback`, `tickets`, `ticket_events`, `audit_events`.
+- Alembic migrations for `documents`, `document_versions`, `document_acl`, `chunks`, `ingestion_jobs`, `audit_events` (conversation and ticket tables follow in Phases 4 and 5).
 - Worker: upload to blob, validate type and size, parse PDF/DOCX/Markdown/TXT, chunk by heading structure, embed in batches, index.
 - Idempotent by content hash, retries with backoff, failed-job visibility. Delete and re-version remove old chunks.
 - Admin UI: upload, assign ACL groups, status, versions, re-index, delete.
@@ -134,6 +134,13 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 - Migrate the 5 sample documents and add a larger synthetic corpus (about 50-100 documents across departments) so retrieval and ACLs are tested meaningfully.
 
 **Done when:** an upload becomes searchable, and a deleted document is unretrievable, both verified automatically.
+
+**Phase 2 status: complete.** Delivered as specified (migrations, validated multi-format ingestion, heading-aware chunking, idempotent upload, safe re-versioning, retrying job queue with leases, admin UI, per-document group ACLs applied inside the search query and re-checked before use, a 49-document synthetic corpus, and the embedding model recorded per version). Differences from the plan:
+- **Migrations are created with the code that uses them.** This phase's migration covers documents, versions, ACLs, chunks, jobs and audit events. The `conversations`, `messages`, `feedback`, `tickets` and `ticket_events` tables arrive in Phases 4 and 5, where their shape is known.
+- **Retrieval is Postgres full-text search for now.** Chunks already store embeddings (when a provider is configured) but vector and hybrid ranking, thresholds and evaluation are Phase 3. The embedding column is dimension-less until a model is chosen.
+- **`pg8000` instead of `psycopg`.** A pure-Python driver runs identically on locked-down machines (psycopg's native libpq is blocked by some Windows application-control policies), CI and the container.
+- **Embeddings are optional.** Any OpenAI-compatible endpoint works; without one, documents are keyword-indexed and can be re-indexed later (the admin page flags them).
+- **Added beyond the plan:** a worker heartbeat health check, bounded Azure retries (so `/readyz` answers in seconds), an `audit_events` trail for administrative actions, and a migration CLI with autogenerate.
 
 ### Phase 3: Retrieval and evaluation (about 1-2 weeks)
 - Hybrid search: pgvector + Postgres full-text, merged with reciprocal rank fusion, ACL filter applied inside the query.

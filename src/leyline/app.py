@@ -6,15 +6,32 @@ from redis import Redis
 from redis.exceptions import RedisError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from leyline.adapters.search_postgres import PostgresSearchIndex
 from leyline.auth.access import current_principal, load_principal
 from leyline.auth.csrf import SAFE_METHODS, csrf_failure_reason
 from leyline.auth.oidc import init_oidc
 from leyline.auth.sessions import RedisSessionInterface, ServerSession
 from leyline.config import Settings, get_settings
-from leyline.extensions import RATE_LIMITER_KEY, REDIS_KEY, SETTINGS_KEY
+from leyline.db.database import Database
+from leyline.extensions import (
+    BLOB_KEY,
+    DATABASE_KEY,
+    EMBEDDER_KEY,
+    INGESTION_KEY,
+    RATE_LIMITER_KEY,
+    REDIS_KEY,
+    SEARCH_KEY,
+    SETTINGS_KEY,
+    NotConfiguredError,
+)
+from leyline.ingestion.service import IngestionService
+from leyline.ports.blob import BlobStore
+from leyline.ports.embeddings import Embedder
+from leyline.ports.search import SearchIndex
 from leyline.ratelimit import RedisRateLimiter
 from leyline.security_headers import init_security_headers
 from leyline.services.logger import log_security_event
+from leyline.wiring import build_blob_store, build_database, build_embedder
 
 # Probes must keep working under load and without a session store.
 _RATE_LIMIT_EXEMPT_ENDPOINTS = frozenset({"health.liveness", "health.readiness"})
@@ -22,8 +39,16 @@ _STATELESS_PATHS = frozenset({"/healthz", "/readyz"})
 
 
 def create_app(
-    settings: Settings | None = None, *, redis_client: Redis | None = None
+    settings: Settings | None = None,
+    *,
+    redis_client: Redis | None = None,
+    database: Database | None = None,
+    blob_store: BlobStore | None = None,
+    embedder: Embedder | None = None,
+    search_index: SearchIndex | None = None,
 ) -> Flask:
+    """Build the application. Collaborators default to ones built from
+    settings; tests inject their own."""
     settings = settings or get_settings()
 
     app = Flask(__name__)
@@ -50,6 +75,21 @@ def create_app(
     app.extensions[SETTINGS_KEY] = settings
     app.extensions[REDIS_KEY] = client
     app.extensions[RATE_LIMITER_KEY] = limiter
+
+    database = database or build_database(settings)
+    blob_store = blob_store or build_blob_store(settings)
+    embedder = embedder or build_embedder(settings)
+    if search_index is None and database is not None:
+        search_index = PostgresSearchIndex(database)
+    app.extensions[DATABASE_KEY] = database
+    app.extensions[BLOB_KEY] = blob_store
+    app.extensions[EMBEDDER_KEY] = embedder
+    app.extensions[SEARCH_KEY] = search_index
+    app.extensions[INGESTION_KEY] = (
+        IngestionService(database, blob_store, embedder, settings)
+        if database is not None and blob_store is not None
+        else None
+    )
 
     app.session_interface = RedisSessionInterface(
         client,
@@ -112,17 +152,23 @@ def create_app(
         )
         return jsonify({"error": "CSRF validation failed"}), 403
 
+    @app.errorhandler(NotConfiguredError)
+    def _not_configured(exc: NotConfiguredError) -> ResponseReturnValue:
+        app.logger.error("%s", exc)
+        return jsonify({"error": "Service temporarily unavailable"}), 503
+
     @app.errorhandler(RedisError)
     def _redis_unavailable(_: RedisError) -> ResponseReturnValue:
         app.logger.error("Redis unavailable")
         g.pop("principal", None)
         return jsonify({"error": "Service temporarily unavailable"}), 503
 
-    from leyline.web import auth, chat, health, monitoring
+    from leyline.web import admin, auth, chat, health, monitoring
 
     app.register_blueprint(health.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(chat.bp)
+    app.register_blueprint(admin.bp)
     app.register_blueprint(monitoring.bp)
 
     return app

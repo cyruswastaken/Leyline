@@ -1,8 +1,9 @@
 # Local development stack.
 #
-#   docker compose up --build                  # app + Redis + Keycloak
-#   docker compose --profile infra up --build  # + Postgres, Azurite, Jaeger
-#                                              # (not used by the app yet)
+#   docker compose up --build                  # app, worker, Postgres, Redis,
+#                                              # Keycloak and Azurite
+#   docker compose run --rm app python -m leyline.seed   # load the sample corpus
+#   docker compose --profile infra up          # + Jaeger (not used yet)
 #
 # All credentials here are throwaway local-dev values and every published
 # port is bound to loopback only. Sign in at http://localhost:8000/ with a
@@ -18,12 +19,18 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      azurite:
+        condition: service_started
     environment:
       # The image defaults to production, which refuses to start without
       # model credentials. Locally the app starts and /readyz reports
       # not-ready until they are provided in .env.
       LEYLINE_ENV: local
       REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: &database_url postgresql+pg8000://leyline:leyline-dev-only@postgres:5432/leyline
+      BLOB_CONNECTION_STRING: &blob_connection "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;" 
       # Server-to-server calls use the compose network name; the browser is
       # sent to Keycloak's public URL (see KC_HOSTNAME below).
       OIDC_METADATA_URL: http://keycloak:8080/realms/leyline/.well-known/openid-configuration
@@ -39,6 +46,57 @@ services:
       - /tmp
     volumes:
       - app-logs:/var/log/leyline
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  # One-shot: bring the schema to the latest revision before anything starts.
+  migrate:
+    build: .
+    command: ["python", "-m", "leyline.db", "upgrade"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LEYLINE_ENV: local
+      DATABASE_URL: *database_url
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  # Indexes uploaded documents: parse, chunk, embed. Same image as the app.
+  worker:
+    build: .
+    command: ["python", "-m", "leyline.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      azurite:
+        condition: service_started
+    environment:
+      LEYLINE_ENV: local
+      DATABASE_URL: *database_url
+      BLOB_CONNECTION_STRING: *blob_connection
+      WORKER_HEARTBEAT_PATH: /tmp/leyline-worker-heartbeat
+    healthcheck:
+      # The worker serves no HTTP; healthy means its loop ran recently.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, sys, time; sys.exit(0 if time.time() - os.path.getmtime('/tmp/leyline-worker-heartbeat') < 120 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    env_file:
+      - path: .env
+        required: false
+    read_only: true
+    tmpfs:
+      - /tmp
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
@@ -85,7 +143,6 @@ services:
       start_period: 30s
 
   postgres:
-    profiles: [infra]
     image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: leyline
@@ -102,7 +159,6 @@ services:
       retries: 10
 
   azurite:
-    profiles: [infra]
     image: mcr.microsoft.com/azure-storage/azurite:3.33.0
     command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
     ports:

@@ -38,12 +38,29 @@ docker build -t leyline:dev .
 policy blocks compiled extensions, install the pure-Python build with
 `pip install --no-binary mypy --force-reinstall mypy`.
 
+## Database and migrations
+
+The schema lives in `src/leyline/db/models.py` and is changed only through Alembic migrations in `src/leyline/db/migrations/versions/`. The driver is **pg8000** (pure Python), so the same code runs on locked-down laptops, in CI and in the container. The pgvector extension is created by the first migration.
+
+```powershell
+python -m leyline.db upgrade                       # apply migrations
+python -m leyline.db current                       # show the revision
+python -m leyline.db check                         # exit 1 if not at head
+python -m leyline.db revision -m "add something"   # autogenerate from the models
+```
+
+After changing a model, run `upgrade`, then `revision -m ...`, review the generated file, and commit both. A test fails if models and migrations disagree. Never edit a migration that has been merged; add a new one.
+
 ## Tests
 
-The suite needs no running services: Redis is replaced by `fakeredis` and the identity provider by a fake client, so `pytest` is fast and hermetic. Shared personas and helpers are in `tests/support.py`; `login_as(client, principal)` creates a real server-side session without going through an identity provider.
+Most tests need no running services: Redis is replaced by `fakeredis`, the identity provider by a fake client and the database by a stub that fails the test if touched. Shared personas, fakes and helpers are in `tests/support.py`; `login_as(client, principal)` creates a real server-side session without going through an identity provider.
+
+Integration tests (ACLs, ingestion, the worker, the admin API, migrations) use a **real Postgres**: start it with `docker compose up -d postgres azurite`. A session-scoped fixture drops and recreates a `leyline_test` database and applies the real migrations, and the `db` fixture empties the tables before each test. Without Postgres they are skipped locally; with `CI=true` (or `LEYLINE_REQUIRE_DB=1`) they fail instead, so CI can never silently skip them. Override the connection with `TEST_DATABASE_URL`.
 
 - `test_access_matrix.py` is the single declaration of who may call which route and fails if a route has no declared policy. **Add every new route there.**
 - `test_regressions.py` holds one test per audited vulnerability.
+- `test_search_acl.py` and `test_chat_access.py` are the permission-model tests: who sees what, and that ACL changes and deletions apply immediately.
+- `test_ingestion_service.py` covers the document lifecycle, retries, leases and concurrent workers.
 - What fakes cannot prove (Authlib's token verification, Keycloak claim mapping) is covered by `python scripts/e2e_login.py` against the running compose stack; CI runs it on every push.
 
 ## Dependencies

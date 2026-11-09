@@ -52,6 +52,9 @@
             white-space: nowrap;
         }
 
+        .nav-link { color: white; opacity: 0.85; text-decoration: none; }
+        .nav-link:hover { opacity: 1; text-decoration: underline; }
+
         #signout-button {
             padding: 6px 12px;
             border: 1px solid rgba(255, 255, 255, 0.5);
@@ -142,6 +145,8 @@
                 <p>AI-powered internal support assistant</p>
             </div>
             <div class="user-bar">
+                {% if "kb_admin" in user.roles %}<a class="nav-link" href="/admin/documents">Documents</a>{% endif %}
+                {% if "security_auditor" in user.roles %}<a class="nav-link" href="/monitoring">Monitoring</a>{% endif %}
                 <span id="user-name">{{ user.name or user.email or "Signed in" }}</span>
                 <button id="signout-button" type="button">Sign out</button>
             </div>

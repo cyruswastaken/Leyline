@@ -14,17 +14,34 @@
   "roles": {
     "client": {
       "leyline-web": [
-        { "name": "kb_admin", "description": "Manage knowledge-base documents" },
-        { "name": "support_agent", "description": "Work escalated helpdesk tickets" },
-        { "name": "security_auditor", "description": "View security monitoring and audit data" }
+        {
+          "name": "kb_admin",
+          "description": "Manage knowledge-base documents"
+        },
+        {
+          "name": "support_agent",
+          "description": "Work escalated helpdesk tickets"
+        },
+        {
+          "name": "security_auditor",
+          "description": "View security monitoring and audit data"
+        }
       ]
     }
   },
   "groups": [
-    { "name": "staff" },
-    { "name": "security" },
-    { "name": "hr" },
-    { "name": "finance" }
+    {
+      "name": "staff"
+    },
+    {
+      "name": "security"
+    },
+    {
+      "name": "hr"
+    },
+    {
+      "name": "finance"
+    }
   ],
   "clients": [
     {
@@ -47,7 +64,13 @@
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://127.0.0.1:8000/*##http://localhost:8000/*"
       },
-      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
       "protocolMappers": [
         {
           "name": "groups",
@@ -86,8 +109,16 @@
       "lastName": "Employee",
       "enabled": true,
       "emailVerified": true,
-      "groups": ["/staff"],
-      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+      "groups": [
+        "/staff"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Leyline-dev-1!",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "sam.security",
@@ -96,8 +127,17 @@
       "lastName": "Security",
       "enabled": true,
       "emailVerified": true,
-      "groups": ["/staff", "/security"],
-      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+      "groups": [
+        "/staff",
+        "/security"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Leyline-dev-1!",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "ada.auditor",
@@ -106,9 +146,21 @@
       "lastName": "Auditor",
       "enabled": true,
       "emailVerified": true,
-      "groups": ["/staff"],
-      "clientRoles": { "leyline-web": ["security_auditor"] },
-      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+      "groups": [
+        "/staff"
+      ],
+      "clientRoles": {
+        "leyline-web": [
+          "security_auditor"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Leyline-dev-1!",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "kim.admin",
@@ -117,9 +169,21 @@
       "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
-      "groups": ["/staff"],
-      "clientRoles": { "leyline-web": ["kb_admin"] },
-      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+      "groups": [
+        "/staff"
+      ],
+      "clientRoles": {
+        "leyline-web": [
+          "kb_admin"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Leyline-dev-1!",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "sue.agent",
@@ -128,9 +192,21 @@
       "lastName": "Agent",
       "enabled": true,
       "emailVerified": true,
-      "groups": ["/staff"],
-      "clientRoles": { "leyline-web": ["support_agent"] },
-      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+      "groups": [
+        "/staff"
+      ],
+      "clientRoles": {
+        "leyline-web": [
+          "support_agent"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Leyline-dev-1!",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "hank.hr",
@@ -139,8 +215,36 @@
       "lastName": "HR",
       "enabled": true,
       "emailVerified": true,
-      "groups": ["/staff", "/hr"],
-      "credentials": [{ "type": "password", "value": "Leyline-dev-1!", "temporary": false }]
+      "groups": [
+        "/staff",
+        "/hr"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Leyline-dev-1!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "fiona.finance",
+      "email": "fiona.finance@leyline.test",
+      "firstName": "Fiona",
+      "lastName": "Finance",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": [
+        "/staff",
+        "/finance"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Leyline-dev-1!",
+          "temporary": false
+        }
+      ]
     }
   ]
 }

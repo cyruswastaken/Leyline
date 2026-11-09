@@ -6,10 +6,7 @@ from leyline.auth.principal import (
     Principal,
     principal_from_claims,
 )
-from leyline.services.authorization import can_access, filter_authorized_documents
-
-RESTRICTED = frozenset({"security"})
-
+from leyline.services.authorization import can_read
 
 # --- claims -> principal ----------------------------------------------------
 
@@ -84,49 +81,53 @@ def test_tampered_session_roles_cannot_invent_roles():
     assert principal.roles == {AppRole.USER, AppRole.KB_ADMIN}
 
 
-# --- document authorization -------------------------------------------------
+# --- document authorization (pure rules) --------------------------------------
 
 
-def _doc(level):
-    return {"id": f"d-{level}", "access_level": level}
-
-
-def test_general_documents_need_only_a_signed_in_user():
-    user = Principal(user_id="u")
-    assert can_access("general", user, restricted_groups=RESTRICTED)
-
-
-def test_restricted_documents_need_a_restricted_group():
-    outsider = Principal(user_id="u", groups=frozenset({"staff"}))
-    insider = Principal(user_id="v", groups=frozenset({"staff", "security"}))
-    assert not can_access("restricted", outsider, restricted_groups=RESTRICTED)
-    assert can_access("restricted", insider, restricted_groups=RESTRICTED)
-
-
-def test_app_roles_do_not_grant_document_access():
-    auditor = Principal(
-        user_id="u", roles=frozenset({AppRole.USER, AppRole.SECURITY_AUDITOR})
-    )
-    assert not can_access("restricted", auditor, restricted_groups=RESTRICTED)
-
-
-def test_empty_restricted_group_config_grants_nobody():
-    insider = Principal(user_id="v", groups=frozenset({"security"}))
-    assert not can_access("restricted", insider, restricted_groups=frozenset())
-
-
-@pytest.mark.parametrize("level", [None, "", "secret", "GENERAL", "Restricted", 7])
-def test_missing_or_unknown_access_level_is_denied_to_everyone(level):
-    everything = Principal(
+def person(*groups: str, roles: frozenset[AppRole] | None = None) -> Principal:
+    return Principal(
         user_id="u",
-        groups=frozenset({"security", "staff"}),
-        roles=frozenset(AppRole),
+        groups=frozenset(groups),
+        roles=roles or frozenset({AppRole.USER}),
     )
-    assert not can_access(level, everything, restricted_groups=RESTRICTED)
 
 
-def test_overage_principal_cannot_read_restricted():
+def test_a_matching_group_grants_read():
+    assert can_read(person("staff", "security"), ["security"])
+
+
+def test_no_matching_group_denies_read():
+    assert not can_read(person("staff"), ["security", "hr"])
+
+
+def test_the_everyone_entry_grants_any_signed_in_user_even_without_groups():
+    assert can_read(person(), ["*"])
+    assert can_read(person("staff"), ["*", "security"])
+
+
+def test_an_empty_acl_grants_nobody():
+    everything = person("staff", "security", "*", roles=frozenset(AppRole))
+    assert not can_read(everything, [])
+
+
+def test_app_roles_never_grant_read():
+    powerful = person(roles=frozenset(AppRole))
+    assert not can_read(powerful, ["security"])
+
+
+def test_group_matching_is_exact_and_case_sensitive():
+    assert not can_read(person("Security"), ["security"])
+    assert not can_read(person("security-team"), ["security"])
+    assert not can_read(person("sec"), ["security"])
+    assert not can_read(person("security "), ["security"])
+
+
+def test_the_wildcard_is_not_a_pattern():
+    assert not can_read(person("sec*"), ["security"])
+    assert not can_read(person("security"), ["sec*"])
+
+
+def test_overage_principal_only_reads_everyone_documents():
     principal = principal_from_claims({"sub": "x", "_claim_names": {"groups": "src1"}})
-    docs = [_doc("general"), _doc("restricted")]
-    allowed = filter_authorized_documents(docs, principal, restricted_groups=RESTRICTED)
-    assert [d["access_level"] for d in allowed] == ["general"]
+    assert can_read(principal, ["*"])
+    assert not can_read(principal, ["security"])

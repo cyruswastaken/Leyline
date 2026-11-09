@@ -16,6 +16,22 @@ jobs:
   quality:
     name: Lint, types, tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: leyline
+          POSTGRES_PASSWORD: leyline-dev-only
+          POSTGRES_DB: leyline
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leyline -d leyline"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # GitHub sets CI=true; with it, tests that need Postgres or Azurite
+      # fail loudly instead of being skipped.
+      TEST_DATABASE_URL: postgresql+pg8000://leyline:leyline-dev-only@localhost:5432/leyline_test
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +52,12 @@ jobs:
           pip install -r requirements-dev.txt
           pip install --no-deps -e .
 
+      - name: Start Azurite (blob storage emulator)
+        run: |
+          docker run -d --name azurite -p 10000:10000 \
+            mcr.microsoft.com/azure-storage/azurite:3.33.0 \
+            azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+
       - name: Ruff lint
         run: ruff check .
 
@@ -55,8 +77,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start app, Redis and Keycloak
-        run: docker compose up -d --build --wait --wait-timeout 240
+      - name: Start the full stack
+        # migrate runs once and exits; --wait fails if the app, worker,
+        # Keycloak or any dependency never becomes healthy.
+        run: docker compose up -d --build --wait --wait-timeout 300
+
+      - name: Load the sample corpus
+        run: docker compose run --rm app python -m leyline.seed
 
       - name: Smoke test
         run: |
@@ -66,8 +93,10 @@ jobs:
           test "$(code $base/healthz)" = "200"
           # readiness is 503 here: no model credentials are configured
           test "$(code $base/readyz)" = "503"
-          curl -s $base/readyz | grep -q '"redis_reachable":true'
-          curl -s $base/readyz | grep -q '"oidc_configured":true'
+          for check in redis_reachable database_reachable schema_current \
+                       blob_storage_reachable oidc_configured; do
+            curl -s $base/readyz | grep -q "\"$check\":true"
+          done
 
           # anonymous callers are turned away
           test "$(code -H 'Accept: application/json' $base/me)" = "401"
@@ -86,7 +115,7 @@ jobs:
           # the container does not run as root
           test "$(docker compose exec -T app id -u)" != "0"
 
-      - name: Full login against Keycloak, per persona
+      - name: End to end - login, upload, index, ACLs, delete
         run: |
           pip install requests
           python scripts/e2e_login.py

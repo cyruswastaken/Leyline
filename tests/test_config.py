@@ -12,6 +12,8 @@ FULL_PRODUCTION = {
     "oidc_client_id": "leyline-web",
     "oidc_client_secret": "s",
     "session_cookie_secure": True,
+    "database_url": "postgresql+pg8000://u:p@db.invalid:5432/leyline",
+    "blob_connection_string": "AccountName=x;AccountKey=y",
 }
 
 
@@ -34,6 +36,8 @@ def test_a_complete_production_configuration_is_accepted():
         ({"oidc_client_id": None}, "OIDC_"),
         ({"oidc_client_secret": None}, "OIDC_"),
         ({"session_cookie_secure": False}, "SESSION_COOKIE_SECURE"),
+        ({"database_url": None}, "DATABASE_URL"),
+        ({"blob_connection_string": None}, "BLOB_CONNECTION_STRING"),
     ],
 )
 def test_production_refuses_to_start_when_unsafe_or_incomplete(override, message):
@@ -70,9 +74,47 @@ def test_secrets_are_not_exposed_in_repr():
     assert "SecretStr" in text
 
 
-def test_restricted_groups_parse_from_a_comma_separated_list():
-    parsed = Settings(_env_file=None, restricted_access_groups=" security , hr ,, ")
-    assert parsed.restricted_groups == {"security", "hr"}
-    assert Settings(_env_file=None, restricted_access_groups="").restricted_groups == (
-        frozenset()
-    )
+def test_chunk_overlap_must_be_smaller_than_chunk_size_in_every_environment():
+    # Otherwise the chunker could never advance through a document.
+    for env in ("local", "test", "production"):
+        with pytest.raises(ValidationError, match="CHUNK_OVERLAP_WORDS"):
+            settings(leyline_env=env, chunk_target_words=100, chunk_overlap_words=100)
+
+
+def test_credentials_are_secret_strings():
+    cfg = settings()
+    text = repr(cfg)
+    assert "postgresql" not in text and "AccountKey" not in text
+    assert cfg.database_url is not None
+    assert "p@" not in str(cfg.database_url)  # str() masks it too
+
+
+def test_embeddings_are_optional_and_need_both_url_and_model():
+    assert settings().embeddings_configured is False
+    assert settings(embedding_base_url="http://x/v1").embeddings_configured is False
+    assert settings(embedding_model="m").embeddings_configured is False
+    both = settings(embedding_base_url="http://x/v1", embedding_model="m")
+    assert both.embeddings_configured is True
+
+
+def test_feature_flags_reflect_configuration():
+    loose = Settings(_env_file=None, leyline_env="local")
+    assert loose.database_configured is False
+    assert loose.blob_configured is False
+    assert settings().database_configured and settings().blob_configured
+
+
+def test_configuration_errors_never_echo_secret_values():
+    secrets = {
+        "database_url": "postgresql+pg8000://admin:hunter2-db-pass@db.invalid/x",
+        "oidc_client_secret": "hunter2-oidc-secret",
+        "azure_openai_api_key": "hunter2-openai-key",
+        "blob_connection_string": "AccountName=x;AccountKey=hunter2-blob-key",
+    }
+    with pytest.raises(ValidationError) as failure:
+        settings(flask_debug=True, **secrets)  # invalid: debug in production
+    rendered = str(failure.value)
+    assert "FLASK_DEBUG" in rendered
+    for value in secrets.values():
+        assert value not in rendered
+    assert "hunter2" not in rendered

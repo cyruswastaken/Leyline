@@ -5,28 +5,25 @@ This guide covers running Leyline locally.
 ## Prerequisites
 
 - Python 3.11 or newer (CI tests 3.11 and 3.13; the container uses 3.13)
-- Docker Desktop (the sign-in flow needs Redis and Keycloak, which the compose stack provides)
-- An Azure OpenAI deployment (or another OpenAI-compatible endpoint) to get answers from `/chat`. Without one you can still sign in and use everything except answer generation: `/readyz` reports not-ready and a question that finds relevant documents fails when it reaches the model.
+- Docker Desktop (Postgres, Redis, Keycloak and Azurite run in containers)
+- An Azure OpenAI deployment (or another OpenAI-compatible endpoint) to get answers from `/chat`. Without one you can sign in, upload and search; a question that finds relevant documents fails when it reaches the model.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in the Azure OpenAI values. Do not commit `.env`. All settings are validated at startup by [`config.py`](../src/leyline/config.py); the example file lists every option. The compose file already wires Redis and Keycloak, so a local `.env` only needs the model settings.
+Copy `.env.example` to `.env` and fill in the Azure OpenAI values. Do not commit `.env`. All settings are validated at startup by [`config.py`](../src/leyline/config.py); the example file lists every option. The compose file already wires Postgres, Redis, Keycloak and Azurite, so a local `.env` only needs the model settings (and, optionally, an embedding model; see below).
 
-`LEYLINE_ENV=production` refuses to start unless the model and identity settings are present, session cookies are `Secure`, and `FLASK_DEBUG` is off.
+`LEYLINE_ENV=production` refuses to start unless the model, identity, database and storage settings are present, session cookies are `Secure`, and `FLASK_DEBUG` is off.
 
 ## Run with Docker
 
 ```powershell
 docker compose up --build
+docker compose run --rm app python -m leyline.seed   # load the sample corpus (49 documents)
 ```
 
-This starts the app, Redis and a Keycloak configured from [`deploy/keycloak/leyline-realm.json`](../deploy/keycloak/leyline-realm.json). Open `http://localhost:8000/` and you are redirected to Keycloak to sign in. The first start takes about a minute while Keycloak imports the realm.
+This starts the app, the ingestion **worker**, Postgres (with pgvector), Redis, a Keycloak configured from [`deploy/keycloak/leyline-realm.json`](../deploy/keycloak/leyline-realm.json), and Azurite (Azure Blob Storage emulator). A one-shot `migrate` container brings the database schema up to date first. Open `http://localhost:8000/` and sign in. The first start takes about a minute while Keycloak imports the realm.
 
-To also start Postgres, Azurite and Jaeger (not used by the app yet):
-
-```powershell
-docker compose --profile infra up --build
-```
+Seeding only queues the documents; the worker parses, chunks and indexes them in the background (a few seconds for the sample corpus).
 
 ### Demo users
 
@@ -39,64 +36,123 @@ All demo users share the throwaway password `Leyline-dev-1!` and exist only in t
 | `ada.auditor` | staff | **security_auditor** |
 | `kim.admin` | staff | **kb_admin** |
 | `sue.agent` | staff | **support_agent** |
-| `hank.hr` | staff, hr | user |
+| `hank.hr` | staff, **hr** | user |
+| `fiona.finance` | staff, **finance** | user |
 
-Try asking about the internal network architecture as `alice.employee` and as `sam.security`: only the security group may retrieve that restricted document. Only `ada.auditor` can open `/monitoring`. The Keycloak admin console is at `http://localhost:8080/` (`admin` / `admin-dev-only`).
+Groups decide which documents someone can **read**; app roles decide what they can **do**. For example `kim.admin` manages the knowledge base but, being only in `staff`, cannot read HR or security documents through chat.
+
+### Try it
+
+- As `alice.employee`, ask about the *internal network architecture segments*: the restricted document is never used. As `sam.security`, it is.
+- As `kim.admin`, open **Documents** (`/admin/documents`), upload a Markdown file for the `hr` group, and watch it go *queued → indexing → indexed*. Then as `hank.hr` ask about its content; as `alice.employee` you cannot find it. Edit the groups in the admin page and ask again: the change applies to the very next question.
+- Only `ada.auditor` can open **Monitoring** (`/monitoring`).
+
+The Keycloak admin console is at `http://localhost:8080/` (`admin` / `admin-dev-only`). The sample corpus lives in [`corpus/`](../corpus); see "Corpus format" below.
+
+## Documents and permissions
+
+Each document has an **ACL**: the list of groups allowed to read it. A user can read a document when one of their groups is in its ACL, or the ACL contains the special entry `*` (every signed-in user). A document with an empty ACL is readable by nobody.
+
+Administrators (role `kb_admin`) can upload `.pdf`, `.docx`, `.md` and `.txt` files (up to 10 MB), upload new versions, change ACLs, re-index and delete. They never see document text through the admin API, only metadata and status. Files are validated by their content, not by their name or declared type.
+
+A new version stays invisible until it is fully indexed and then replaces the previous version atomically. Deleting a document makes it unsearchable immediately; its stored files are purged shortly afterwards.
+
+### Embeddings (optional)
+
+Documents are always indexed for keyword search. To also store embeddings (used by hybrid search in a later phase), point the app at any OpenAI-compatible embeddings endpoint in `.env`:
+
+```text
+EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1   # e.g. Ollama
+EMBEDDING_MODEL=nomic-embed-text
+# EMBEDDING_API_KEY=...   (not needed for Ollama)
+```
+
+Each indexed version records the model that produced its vectors. Changing the model marks documents as **needs re-index** in the admin page; click *Re-index* (the old chunks keep serving until the new ones replace them).
+
+### Corpus format
+
+Corpus files start with a header block, then the body:
+
+```text
+Document Title: Annual Leave Policy
+Document ID: HR-LEAVE-001
+Groups: *
+
+# Annual Leave Policy
+...
+```
+
+`Groups:` is a comma-separated ACL (`*` for everyone). The older `Access Level: general | restricted` header is still understood (`general` = everyone, `restricted` = the `security` group). Metadata is read only from the leading header block. Re-running the seed command is safe: unchanged files are skipped, changed files become new versions, and ACLs you changed in the admin page are never overwritten.
 
 ## Run with Python
 
-Run Redis and Keycloak with Docker, and the app on the host:
+Run the services with Docker and the app on the host:
 
 ```powershell
-docker compose up -d redis keycloak
+docker compose up -d postgres redis keycloak azurite
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 pip install --no-deps -e .
+
+$env:DATABASE_URL = "postgresql+pg8000://leyline:leyline-dev-only@localhost:5432/leyline"
+$env:BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://localhost:10000/devstoreaccount1;"
 $env:OIDC_METADATA_URL = "http://localhost:8080/realms/leyline/.well-known/openid-configuration"
 $env:OIDC_CLIENT_ID = "leyline-web"
 $env:OIDC_CLIENT_SECRET = "leyline-dev-secret-change-me"
-python -m leyline.app
+
+python -m leyline.db upgrade     # create/update the schema
+python -m leyline.seed           # queue the sample corpus
+python -m leyline.worker         # in a second terminal: index documents
+python -m leyline.app            # the web app
 ```
 
-This serves `http://localhost:5000/` with the Flask development server. The realm registers redirect URIs only for port 8000, so for host-run development either add `http://localhost:5000/auth/callback` to the client in Keycloak or run the app with gunicorn on port 8000. Set `FLASK_DEBUG=true` only on a trusted machine; the debugger allows remote code execution.
+`python -m leyline.app` serves `http://localhost:5000/`. The realm registers redirect URIs only for port 8000, so for host-run development either add `http://localhost:5000/auth/callback` to the client in Keycloak or run the app with gunicorn on port 8000. Set `FLASK_DEBUG=true` only on a trusted machine; the debugger allows remote code execution. (The Azurite key above is Microsoft's published development key, not a secret.)
+
+`python -m leyline.worker --once` drains the queue and exits; `python -m leyline.seed --index` seeds and indexes in one go without a separate worker.
 
 ## HTTP endpoints
 
 | Method | Endpoint | Access | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | public | Liveness: the process is up |
-| `GET` | `/readyz` | public | Readiness: Redis, identity provider, model and corpus (503 otherwise) |
+| `GET` | `/readyz` | public | Readiness: Redis, database, schema, storage, identity provider and model (503 otherwise) |
 | `GET` | `/login` | public | Start sign-in (`?next=/path` returns you afterwards) |
 | `GET` | `/auth/callback` | public | Identity provider redirect target |
 | `POST` | `/logout` | signed in + CSRF | End the session and the identity provider's session |
 | `GET` | `/me` | signed in | Current user, roles, groups and CSRF token |
 | `GET` | `/` | signed in | Chat interface |
-| `POST` | `/chat` | signed in + CSRF | Process a message |
-| `GET` | `/monitoring` | `security_auditor` | Monitoring dashboard |
-| `GET` | `/monitoring/summary` | `security_auditor` | Security event summary |
-| `GET` | `/monitoring/events` | `security_auditor` | Recent security events |
+| `POST` | `/chat` | signed in + CSRF | Ask a question |
+| `GET` | `/monitoring`, `/monitoring/summary`, `/monitoring/events` | `security_auditor` | Security dashboard and events |
+| `GET` | `/admin/documents` | `kb_admin` | Knowledge-base admin page |
+| `GET`, `POST` | `/api/admin/documents` | `kb_admin` (+ CSRF) | List documents; upload a new one (multipart: `file`, `title`, `groups`) |
+| `GET`, `DELETE` | `/api/admin/documents/<id>` | `kb_admin` (+ CSRF) | Details; delete |
+| `POST` | `/api/admin/documents/<id>/versions` | `kb_admin` + CSRF | Upload a new version |
+| `PUT` | `/api/admin/documents/<id>/acl` | `kb_admin` + CSRF | Replace the ACL (`{"groups": [...]}`) |
+| `POST` | `/api/admin/documents/<id>/reindex` | `kb_admin` + CSRF | Queue a re-index |
 
-Unauthenticated browser navigation is redirected to `/login`; unauthenticated API calls get `401`; signed-in users without the required role get `403`. State-changing requests need the `X-CSRF-Token` header (the page reads it from a `<meta>` tag; `/me` also returns it).
-
-Earlier versions exposed `/documents`, `/documents/<role>` and `/search/<role>`. They leaked restricted content and accepted the role from the URL, so they were removed.
+Unauthenticated browser navigation is redirected to `/login`; unauthenticated API calls get `401`; signed-in users without the required role get `403`. State-changing requests need the `X-CSRF-Token` header (the pages read it from a `<meta>` tag; `/me` also returns it).
 
 ## Behavior
 
 - Identity comes only from the signed-in session; nothing in the request can change who you are.
+- Search only ever considers documents the user may read, and every hit is checked against the database again before it is given to the model.
 - Blocked prompt-extraction patterns return HTTP 403 before retrieval.
 - Rate limits return HTTP 429: 10 chat requests per user and 120 requests per client IP, per 60 seconds by default.
 - Invalid input returns HTTP 400: non-JSON bodies, non-string or empty messages, and messages over 2,000 characters.
 - Requests without relevant context return an unavailable response rather than an invented answer.
-- If Redis is unavailable, requests that need a session return 503.
+- If Redis or the database is unavailable, requests that need them return 503.
 
 ## Tests and checks
 
 ```powershell
-pytest --cov      # unit and integration tests (fake Redis, fake identity provider)
+docker compose up -d postgres azurite   # needed by the integration tests
+pytest --cov      # about 580 tests
 ruff check .      # lint
 ruff format .     # formatting
 mypy              # strict type checking
 ```
 
-With the compose stack running, `python scripts/e2e_login.py` performs the real sign-in flow against Keycloak for every demo user and checks what each can reach, including that only the security group retrieves the restricted document. CI runs it too.
+Most tests are hermetic (fake Redis, fake identity provider, stubbed database). Integration tests use a real Postgres: they create a throwaway `leyline_test` database, apply the real migrations, and run the actual search, ingestion and worker code. If Postgres is not reachable they are skipped locally; in CI (`CI=true`) they fail instead.
+
+With the full stack running and the corpus seeded, `python scripts/e2e_login.py` performs the real sign-in flow for every demo user, uploads a document as an administrator, waits for the worker, and checks who can retrieve it as its ACL changes, through to deletion. CI runs it too.

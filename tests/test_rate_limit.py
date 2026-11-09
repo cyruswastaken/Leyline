@@ -1,10 +1,27 @@
 import pytest
 
+from leyline.adapters.blob_memory import InMemoryBlobStore
 from leyline.app import create_app
 from leyline.ratelimit import RedisRateLimiter
-from tests.support import PERSONAS, login_as, make_settings
+from tests.support import (
+    PERSONAS,
+    FakeSearchIndex,
+    StubDatabase,
+    login_as,
+    make_settings,
+)
 
 JSON = {"Accept": "application/json"}
+
+
+def _build(settings, redis):
+    return create_app(
+        settings,
+        redis_client=redis,
+        database=StubDatabase(),
+        blob_store=InMemoryBlobStore(),
+        search_index=FakeSearchIndex(),
+    )
 
 
 # --- the limiter itself -----------------------------------------------------
@@ -54,8 +71,8 @@ def test_rejected_attempts_do_not_extend_the_lockout(redis, monkeypatch):
 def test_limit_is_shared_between_app_instances(redis, llm_calls):
     """Two workers/instances behind a load balancer share one budget."""
     settings = make_settings(rate_limit_requests=4)
-    first = create_app(settings, redis_client=redis).test_client()
-    second = create_app(settings, redis_client=redis).test_client()
+    first = _build(settings, redis).test_client()
+    second = _build(settings, redis).test_client()
     t1 = login_as(first, PERSONAS["employee"])
     t2 = login_as(second, PERSONAS["employee"])
 

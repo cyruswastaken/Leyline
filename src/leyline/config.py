@@ -22,6 +22,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Validation errors must never echo configuration values (secrets).
+        hide_input_in_errors=True,
     )
 
     # "local" and "test" tolerate a missing model configuration so the app
@@ -58,10 +60,42 @@ class Settings(BaseSettings):
     # headers are trusted (0 = trust none; the client address is the socket).
     trusted_proxy_count: int = Field(default=0, ge=0, le=5)
 
-    # Interim bridge until per-document group ACLs arrive in Phase 2:
-    # "restricted" documents require membership in one of these groups.
-    # Comma-separated. "general" documents need only a signed-in user.
-    restricted_access_groups: str = "security"
+    # --- Database (Postgres + pgvector) ------------------------------------
+    # postgresql+pg8000://user:password@host:5432/dbname
+    database_url: SecretStr | None = None
+
+    # --- Document storage (Azure Blob Storage / Azurite) ---------------------
+    blob_connection_string: SecretStr | None = None
+    blob_container: str = "leyline-documents"
+
+    # --- Uploads and parsing ------------------------------------------------
+    max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    max_pdf_pages: int = Field(default=300, gt=0)
+    # Guards against zip bombs: total uncompressed size of a DOCX archive.
+    max_docx_uncompressed_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+
+    # --- Embeddings (any OpenAI-compatible endpoint: Azure OpenAI v1, OpenAI,
+    # Ollama, ...). Optional: without it documents are indexed for keyword
+    # search only and can be re-indexed later once a model is configured.
+    embedding_base_url: str | None = None
+    embedding_api_key: SecretStr | None = None
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = Field(default=None, gt=0)
+    embedding_batch_size: int = Field(default=32, gt=0, le=256)
+
+    # --- Ingestion worker -----------------------------------------------------
+    ingest_max_attempts: int = Field(default=5, gt=0, le=20)
+    ingest_backoff_seconds: int = Field(default=30, ge=0)
+    # A job running longer than this is presumed dead and may be reclaimed.
+    ingest_lease_seconds: int = Field(default=300, gt=0)
+    worker_poll_seconds: float = Field(default=2.0, gt=0)
+    # When set, the worker touches this file every loop; a container health
+    # check treats a stale file as a hung worker.
+    worker_heartbeat_path: Path | None = None
+    chunk_target_words: int = Field(default=200, gt=0)
+    chunk_overlap_words: int = Field(default=40, ge=0)
+
+    search_top_k: int = Field(default=5, gt=0, le=50)
 
     max_message_length: int = Field(default=2000, gt=0)
     max_request_bytes: int = Field(default=16 * 1024, gt=0)
@@ -85,10 +119,25 @@ class Settings(BaseSettings):
         )
 
     @property
-    def restricted_groups(self) -> frozenset[str]:
-        return frozenset(
-            g.strip() for g in self.restricted_access_groups.split(",") if g.strip()
-        )
+    def database_configured(self) -> bool:
+        return self.database_url is not None
+
+    @property
+    def blob_configured(self) -> bool:
+        return self.blob_connection_string is not None
+
+    @property
+    def embeddings_configured(self) -> bool:
+        return bool(self.embedding_base_url and self.embedding_model)
+
+    @model_validator(mode="after")
+    def _check_chunking(self) -> Settings:
+        # Otherwise the chunker could never advance through a document.
+        if self.chunk_overlap_words >= self.chunk_target_words:
+            raise ValueError(
+                "CHUNK_OVERLAP_WORDS must be smaller than CHUNK_TARGET_WORDS"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_production(self) -> Settings:
@@ -104,6 +153,10 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "OIDC_METADATA_URL, OIDC_CLIENT_ID and "
                     "OIDC_CLIENT_SECRET are required in production"
+                )
+            if not (self.database_configured and self.blob_configured):
+                raise ValueError(
+                    "DATABASE_URL and BLOB_CONNECTION_STRING are required in production"
                 )
             if not self.session_cookie_secure:
                 raise ValueError("SESSION_COOKIE_SECURE must be true in production")

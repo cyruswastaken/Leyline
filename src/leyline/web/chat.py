@@ -6,7 +6,7 @@ from leyline.auth.access import (
     login_required,
     require_principal,
 )
-from leyline.extensions import app_settings, rate_limiter
+from leyline.extensions import app_settings, database, rate_limiter, search_index
 from leyline.services.chat_service import process_message
 
 bp = Blueprint("chat", __name__)
@@ -52,6 +52,8 @@ def chat() -> ResponseReturnValue:
         principal,
         rate_limiter=rate_limiter(),
         settings=settings,
+        search=search_index(),
+        database=database(),
     )
 
     if not result["allowed"]:

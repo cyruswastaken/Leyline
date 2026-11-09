@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Leyline is a read-only RAG helpdesk. People sign in through their organisation's identity provider, ask IT questions, and get answers grounded only in the documents they are allowed to read.
+Leyline is a read-only RAG helpdesk. People sign in through their organisation's identity provider, ask IT questions, and get answers grounded only in the documents they are allowed to read. Knowledge-base administrators upload documents and decide which groups may read them.
 
 ## Request flow
 
@@ -15,15 +15,22 @@ Browser
   -> route: login_required / require_roles  (deny by default)
   -> per-user rate limit                    (Redis)
   -> blocked-pattern validation
-  -> document loading
-  -> authorization against the principal    (BEFORE chunking and retrieval)
-  -> chunking
-  -> relevance retrieval
+  -> permission-aware search                (ACL predicate inside the SQL query)
+  -> re-authorization of every hit          (against the database, just before use)
   -> grounded language-model response
   -> security event logging
 ```
 
-Authorization occurs before chunking and retrieval. This ordering is essential: an unauthorized document is not available to the retrieval layer or the model.
+```text
+Admin upload                                       Worker (same image)
+  validate by content  ->  blob store (Azure/Azurite)
+  -> document + version + ACL + job (one DB transaction)
+                                       claim job (FOR UPDATE SKIP LOCKED)
+                                       -> parse -> chunk -> embed (optional)
+                                       -> replace chunks + promote version (one transaction)
+```
+
+Authorization is part of retrieval itself and is then verified again before anything reaches the prompt. An unauthorized chunk is never selected, and if it somehow were (a lagging index), it is dropped before the model sees it.
 
 ## Identity
 
@@ -37,29 +44,55 @@ A `Principal` (`auth/principal.py`) is built only from verified token claims:
 | `groups` | `groups` | Which documents the person may **read** |
 | `roles` | `roles` | What the person may **do** in Leyline |
 
-Unknown role strings are ignored and every signed-in user is a plain `user`. Identity and role are **never** read from the URL, query string, body or headers; the removed `/documents/<role>` and `/search/<role>` routes were an example of what not to do.
+Unknown role strings are ignored and every signed-in user is a plain `user`. Identity and role are **never** read from the URL, query string, body or headers.
 
 ### App roles
 
 | Role | Grants |
 | --- | --- |
 | `user` | Chat (every signed-in user) |
-| `kb_admin` | Manage documents (Phase 2) |
+| `kb_admin` | Manage documents and their ACLs; **no** read access to content |
 | `support_agent` | Work escalated tickets (Phase 5) |
 | `security_auditor` | `/monitoring*` dashboard and audit events |
 
 Routes opt in with `@login_required` or `@require_roles(...)` (`auth/access.py`). `tests/test_access_matrix.py` lists every route with its policy and fails if a route is registered without one.
 
-### Document access
+## Documents and permissions
 
-Interim model until per-document group ACLs arrive with the database (Phase 2):
+### Data model (Postgres)
 
-- `general` documents: any signed-in user.
-- `restricted` documents: membership in one of `RESTRICTED_ACCESS_GROUPS` (default `security`). An app role such as `security_auditor` does **not** unlock documents.
-- A missing or unrecognised access level, or an empty group configuration, grants nobody access.
-- Metadata is read only from a document's leading header block, so body text cannot change its classification.
+| Table | Holds |
+| --- | --- |
+| `documents` | Title, creator, pointer to the live version, soft-delete marker, optional external id |
+| `document_versions` | One row per uploaded file: hash, size, stored-file key, status (`pending`, `processing`, `indexed`, `failed`, `superseded`), embedding model used |
+| `document_acl` | One row per (document, group). **The single source of truth for who may read** |
+| `chunks` | Searchable text with its heading, a generated full-text column and an optional embedding |
+| `ingestion_jobs` | The durable work queue (ingest and purge jobs) |
+| `audit_events` | Administrative actions: who uploaded, re-versioned, re-indexed, re-permissioned or deleted what |
 
-If an identity provider omits groups from a token (Entra "overage"), the principal is flagged `groups_incomplete` and simply has no groups, so restricted access fails closed. Resolving overage through Microsoft Graph is planned for Phase 7.
+The schema is managed by Alembic migrations (`python -m leyline.db upgrade`); `/readyz` reports not-ready if the database is not at the code's revision, and a test fails if the models and migrations drift apart.
+
+### Access rule
+
+A document is readable by a principal when its ACL contains one of the principal's groups, or the reserved entry `*` (any signed-in user). An empty ACL means nobody. Application roles never grant read access. The rule exists twice, and a test asserts the two agree for every combination of groups:
+
+- `can_read` (Python) in `services/authorization.py`
+- `readable_by` (SQL predicate) in the same module, applied inside the search query
+
+If an identity provider omits groups from a token (Entra "overage"), the principal is flagged `groups_incomplete` and simply has no groups, so only `*` documents are readable. Resolving overage through Microsoft Graph is planned for Phase 7.
+
+### Immediate effect
+
+Because the ACL is queried at search time rather than copied into the index, **changing an ACL or deleting a document applies to the very next question**. Deleting also removes the chunks in the same transaction. Every search hit is additionally re-checked against the database (`authorize_hits`) right before use, which also protects against any future index that lags (Azure AI Search in Phase 7).
+
+### Ingestion
+
+- **Validation by content.** Extension, magic bytes and structure must agree (a `.pdf` must be a PDF, a `.docx` a valid Office zip); the browser's content type is ignored. Limits: 10 MB per file, 300 PDF pages, a cap on a DOCX's unpacked size (zip bombs), no encrypted PDFs, XML parsed with entity expansion disabled.
+- **Stored by id, not name.** The original file goes to blob storage under `documents/<document-id>/<version-id>`; the user's filename is display-only, sanitized and always rendered as text.
+- **Idempotent.** Uploading identical bytes as the latest version is a no-op.
+- **Safe re-versioning.** A new version stays invisible until it is fully indexed, then replaces the old chunks and becomes current in one transaction, so searches never see an empty or half-indexed document. A slow older version that finishes after a newer one is marked `superseded` instead of overwriting it.
+- **Reliable jobs.** Jobs commit atomically with the document state. Workers claim with `FOR UPDATE SKIP LOCKED`, failures retry with exponential back-off, unusable files fail immediately without retries, a crashed worker's job is reclaimed after a lease timeout, and a fencing token stops a worker that lost its lease from finishing someone else's job. Failures are visible in the admin page.
+- **Embeddings are optional** and pluggable (any OpenAI-compatible endpoint). Each version records the model used, so a model change is detected and offered as a re-index.
 
 ## Sessions
 
@@ -75,7 +108,7 @@ The browser holds only an opaque random 256-bit id in an `HttpOnly`, `SameSite=L
 - **CSRF:** state-changing requests from a signed-in session need an `X-CSRF-Token` header (or `csrf_token` form field) matching the session token, plus a same-origin `Origin` header when one is sent.
 - **CSP:** `default-src 'none'`, scripts and styles only with a fresh per-request nonce, no `unsafe-inline`, `frame-ancestors 'none'`.
 - Also `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, COOP/CORP, `Cache-Control: no-store`, and HSTS when cookies are secure.
-- Event and user data is rendered with `textContent` or auto-escaped templates, never `innerHTML`.
+- Event, title and filename data is rendered with `textContent` or auto-escaped templates, never `innerHTML`.
 
 ## Rate limiting
 
@@ -85,27 +118,25 @@ A Redis sliding window (`ratelimit.py`) is shared by every worker and instance. 
 
 All code lives in `src/leyline/`.
 
-- `app.py` is the `create_app()` factory and request hooks; `config.py` holds validated settings.
+- `app.py` is the `create_app()` factory and request hooks; `config.py` holds validated settings; `wiring.py` builds the concrete adapters shared by the app and the worker.
 - `auth/` holds the principal, Redis sessions, OIDC setup, CSRF and the access decorators.
-- `web/` contains the Flask blueprints (auth, chat, health, monitoring).
+- `web/` contains the Flask blueprints (auth, chat, admin, health, monitoring).
+- `db/` holds the SQLAlchemy models, the engine wrapper and the Alembic migrations.
+- `ports/` defines the interfaces the app depends on (`BlobStore`, `Embedder`, `SearchIndex`); `adapters/` implements them (Azure Blob / Azurite, OpenAI-compatible embeddings, Postgres full-text search, in-memory blobs for tests). Swapping Azure AI Search in later means writing one adapter that passes the same tests.
+- `ingestion/` holds the parsers, chunker, validation, the job queue and the document lifecycle service.
+- `worker.py` is the ingestion worker; `seed.py` imports the sample corpus through the normal ingestion path.
+- `services/` holds authorization, the chat pipeline, audit, security rules and the model call.
 - `security_headers.py` sets CSP and the other headers; `ratelimit.py` is the Redis limiter.
-- `services/chat_service.py` orchestrates the request pipeline.
-- `services/authorization.py` decides which documents a principal may read.
-- `services/document_loader.py` parses and chunks corpus files.
-- `services/retrieval.py` performs lightweight relevance scoring.
-- `services/llm.py` calls the configured Azure OpenAI deployment.
-- `services/security.py` validates blocked patterns.
-- `services/monitoring.py` stores and summarizes security events.
-- `corpus/` contains synthetic general and restricted documents.
+- `corpus/` contains the synthetic documents (49 across IT, HR, Finance, Security and Facilities).
 
 ## Cloud deployment model
 
 The Azure deployment extends this design with:
 
 - Microsoft Entra ID for authentication (app-level OIDC, not App Service Easy Auth, so one code path runs everywhere)
-- Entra group membership for document ACLs and Entra app roles for application roles
-- Azure Cache for Redis for sessions and rate limits
-- Blob Storage as the document source and Azure AI Search for filtered retrieval
+- Entra group object ids as document ACL groups and Entra app roles for application roles
+- Azure Database for PostgreSQL (pgvector) and Azure Cache for Redis
+- Blob Storage for the original files and Azure AI Search as an additional `SearchIndex` adapter
 - Azure OpenAI for embeddings and response generation
 - Log Analytics for diagnostic and security telemetry
 
@@ -113,13 +144,16 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the outline and [ROADMAP.md](ROADMAP.md) 
 
 ## Threats and limitations
 
-- **Session revocation lag.** Roles and groups are captured at sign-in. Removing a user's group takes effect at their next sign-in, or when the session expires (at most 12 hours by default). Per-request re-authorization against the database arrives in Phase 2; shorter lifetimes and back-channel logout are options.
-- Pattern-based prompt-injection checks cannot detect every rephrased attack (Phase 4 replaces them with layered guardrails).
-- Security events are still written to a local file; `/monitoring*` is auditor-only but not yet backed by a durable store (Phase 6).
+- **User group revocation lag.** A person's *groups and roles* are captured at sign-in. Removing someone from a group in the identity provider takes effect at their next sign-in or when the session expires (at most 12 hours by default). *Document-side* changes (ACL edits, deletions) do apply immediately. Shorter lifetimes or back-channel logout can narrow the window.
+- **Administrators see metadata.** `kb_admin` can see titles, filenames and ACLs of every document, including restricted ones, but never their content.
+- **Keyword retrieval only.** Search is Postgres full-text with OR semantics; vector and hybrid search with relevance thresholds arrive in Phase 3, so weakly related documents can still be selected.
+- **Parsing runs in the worker process.** Inputs are bounded and validated, but a maliciously crafted PDF could still consume CPU/memory in the worker; the job lease limits the blast radius. Sandboxing parsers is a later hardening step.
+- **Prompt injection.** Pattern-based checks cannot detect every rephrased attack, and retrieved text is not yet clearly delimited as untrusted (Phase 4 adds layered guardrails).
+- **Audit trail.** Administrative actions are audited in Postgres, but security events (logins, denials, retrievals) still go to a local file, and `audit_events` is not yet append-only (Phase 6).
 - The model call has a timeout and retries but no graceful degraded mode yet; a model outage currently returns a generic 500 (Phase 4).
 - Secrets in environment variables should be replaced with managed identity or Key Vault references in production.
-- The development Keycloak realm uses shared demo passwords over plain HTTP and exists only for local use.
+- The development Keycloak realm uses shared demo passwords over plain HTTP, and Azurite uses Microsoft's published development key; both exist only for local use.
 - The corpus is synthetic and has not been independently security tested.
 - Grounding reduces hallucination risk but does not prove factual correctness.
 
-The initial audit, its fixes and the remaining work are tracked in the [roadmap](ROADMAP.md). Every fixed vulnerability has a regression test in `tests/test_regressions.py`. Review all controls before handling real company data.
+The initial audit, its fixes and the remaining work are tracked in the [roadmap](ROADMAP.md). Every fixed vulnerability has a regression test. Review all controls before handling real company data.
