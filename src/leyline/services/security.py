@@ -1,6 +1,3 @@
-from typing import Optional
-
-
 BLOCKED_PATTERNS = [
     "ignore previous instructions",
     "ignore all previous instructions",
@@ -18,7 +15,7 @@ BLOCKED_PATTERNS = [
 ]
 
 
-def check_message(message: str) -> Optional[str]:
+def check_message(message: str) -> str | None:
     """
     Check whether a user message contains a known blocked pattern.
 

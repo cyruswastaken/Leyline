@@ -2,28 +2,57 @@
 
 ## Working conventions
 
-- Keep application logic in `services/` and route definitions in `app.py`.
+- Routes live in `src/leyline/web/`; application logic lives in
+  `src/leyline/services/`. Routes validate input and delegate.
+- Read configuration only through `leyline.config.get_settings()`.
 - Preserve the authorization-before-retrieval ordering.
-- Keep corpus documents small, synthetic, and explicit about their access level.
-- Do not commit `.env` files, API keys, generated logs, or local virtual environments.
-- Prefer focused changes and validate behavior before opening a pull request.
+- Keep corpus documents small, synthetic, and explicit about their access
+  level in the leading header block.
+- Do not commit `.env` files, API keys, generated logs, or virtual
+  environments.
+- Prefer focused changes, and keep the full suite green.
 
-## Local validation
-
-Install dependencies with:
-
-```powershell
-pip install -r requirements.txt
-```
-
-Run the application with:
+## Setup
 
 ```powershell
-python app.py
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+pip install --no-deps -e .
+pre-commit install
 ```
 
-Then follow the checklist in [USAGE.md](USAGE.md). If tests are added, keep them focused on authorization, blocked requests, rate limiting, retrieval, and grounded responses.
+## Validation
+
+CI (`.github/workflows/ci.yml`) runs the same checks you can run locally:
+
+```powershell
+ruff check .
+ruff format --check .
+mypy
+pytest --cov
+docker build -t leyline:dev .
+```
+
+`mypy` runs in strict mode. On Windows machines whose Application Control
+policy blocks compiled extensions, install the pure-Python build with
+`pip install --no-binary mypy --force-reinstall mypy`.
+
+## Dependencies
+
+`pyproject.toml` declares dependency ranges. `requirements.txt` is the pinned
+runtime lock used by the Docker image; regenerate it from a clean virtual
+environment when ranges change, then run the full suite.
+`requirements-dev.txt` adds pinned test and lint tooling.
 
 ## Security-sensitive changes
 
-Any change to identity handling, role mapping, document filtering, prompt construction, or logging should include a review of both allowed and denied paths. Never weaken authorization to make a query return results.
+Any change to identity handling, role mapping, document filtering, prompt
+construction, or logging must include tests for both the allowed and the
+denied paths. Every audited vulnerability has a regression test in
+`tests/test_regressions.py`. Never weaken authorization to make a query
+return results.
+
+## Roadmap
+
+Planned phases and acceptance criteria are in [ROADMAP.md](ROADMAP.md).

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, types, tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install
+        run: |
+          pip install -r requirements-dev.txt
+          pip install --no-deps -e .
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Mypy (strict)
+        run: mypy
+
+      - name: Tests
+        run: pytest --cov --cov-report=term-missing --cov-report=xml
+
+  docker:
+    name: Container build and smoke test
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t leyline:ci .
+
+      - name: Smoke test
+        run: |
+          docker run -d --name leyline -p 8000:8000 \
+            -e LEYLINE_ENV=local leyline:ci
+          for i in $(seq 1 20); do
+            if curl -fs http://127.0.0.1:8000/healthz; then break; fi
+            sleep 1
+          done
+          curl -fs http://127.0.0.1:8000/healthz
+          test "$(docker exec leyline id -u)" != "0"
+          test "$(curl -s -o /dev/null -w '%{http_code}' \
+            http://127.0.0.1:8000/documents)" = "404"
+
+      - name: Production mode refuses to start unconfigured
+        run: |
+          if docker run --rm leyline:ci; then
+            echo "expected startup failure without model configuration"
+            exit 1
+          fi

@@ -1,9 +1,7 @@
 from pathlib import Path
+from typing import Any
 
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-CORPUS_DIR = BASE_DIR / "corpus"
-
+from leyline.config import get_settings
 
 # Number of words in each chunk.
 CHUNK_SIZE = 150
@@ -12,18 +10,16 @@ CHUNK_SIZE = 150
 CHUNK_OVERLAP = 30
 
 
-def parse_document(file_path: Path) -> dict:
+def parse_document(file_path: Path) -> dict[str, Any]:
     """
     Parse a document and extract its metadata and content.
     """
 
-    text = file_path.read_text(
-        encoding="utf-8"
-    )
+    text = file_path.read_text(encoding="utf-8")
 
     lines = text.splitlines()
 
-    metadata = {}
+    metadata: dict[str, Any] = {}
     content_lines = []
 
     header_fields = {
@@ -38,21 +34,14 @@ def parse_document(file_path: Path) -> dict:
     in_header = True
 
     for line in lines:
-
         if in_header:
-
             if not line.strip():
                 continue
 
             for prefix, key in header_fields.items():
-
                 if line.startswith(prefix):
-
                     # First occurrence wins.
-                    metadata.setdefault(
-                        key,
-                        line[len(prefix):].strip()
-                    )
+                    metadata.setdefault(key, line[len(prefix) :].strip())
                     break
 
             else:
@@ -60,21 +49,16 @@ def parse_document(file_path: Path) -> dict:
                 content_lines.append(line)
 
         else:
-
             content_lines.append(line)
 
-    metadata["content"] = "\n".join(
-        content_lines
-    ).strip()
+    metadata["content"] = "\n".join(content_lines).strip()
 
     return metadata
 
 
 def chunk_document(
-    document: dict,
-    chunk_size: int = CHUNK_SIZE,
-    overlap: int = CHUNK_OVERLAP
-) -> list:
+    document: dict[str, Any], chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
+) -> list[dict[str, Any]]:
     """
     Split a document into overlapping word-based chunks.
 
@@ -82,10 +66,7 @@ def chunk_document(
     on every chunk.
     """
 
-    content = document.get(
-        "content",
-        ""
-    ).strip()
+    content = document.get("content", "").strip()
 
     if not content:
         return []
@@ -98,31 +79,23 @@ def chunk_document(
     chunk_number = 0
 
     while start < len(words):
-
         end = start + chunk_size
 
-        chunk_words = words[
-            start:end
-        ]
+        chunk_words = words[start:end]
 
-        chunk_content = " ".join(
-            chunk_words
-        ).strip()
+        chunk_content = " ".join(chunk_words).strip()
 
         if chunk_content:
-
-            chunks.append({
-                **document,
-
-                "chunk_id": (
-                    f"{document.get('id', 'unknown')}"
-                    f"-chunk-{chunk_number}"
-                ),
-
-                "chunk_index": chunk_number,
-
-                "content": chunk_content
-            })
+            chunks.append(
+                {
+                    **document,
+                    "chunk_id": (
+                        f"{document.get('id', 'unknown')}-chunk-{chunk_number}"
+                    ),
+                    "chunk_index": chunk_number,
+                    "content": chunk_content,
+                }
+            )
 
         chunk_number += 1
 
@@ -136,23 +109,16 @@ def chunk_document(
     return chunks
 
 
-def load_documents() -> list:
+def load_documents() -> list[dict[str, Any]]:
     """
     Load all .txt documents from the corpus.
     """
 
     documents = []
 
-    for file_path in CORPUS_DIR.rglob(
-        "*.txt"
-    ):
+    for file_path in get_settings().corpus_dir.rglob("*.txt"):
+        document = parse_document(file_path)
 
-        document = parse_document(
-            file_path
-        )
-
-        documents.append(
-            document
-        )
+        documents.append(document)
 
     return documents

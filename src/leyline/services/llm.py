@@ -1,59 +1,47 @@
-import os
-
-from dotenv import load_dotenv
 from openai import OpenAI
 
-
-load_dotenv()
-
-
-REQUEST_TIMEOUT_SECONDS = 30
+from leyline.config import get_settings
 
 _client = None
-
-
-def _require_env(name: str) -> str:
-    value = os.getenv(name)
-
-    if not value:
-        raise RuntimeError(f"{name} is not configured")
-
-    return value
 
 
 def get_client() -> OpenAI:
     """
     Build the client on first use so that a missing setting
-    does not stop the app (and /health) from starting.
+    does not stop the app (and /healthz) from starting.
     """
 
     global _client
 
-    if _client is None:
+    settings = get_settings()
 
-        endpoint = _require_env("AZURE_OPENAI_ENDPOINT")
+    if _client is None:
+        if not (settings.azure_openai_endpoint and settings.azure_openai_api_key):
+            raise RuntimeError("Azure OpenAI is not configured")
 
         _client = OpenAI(
-            base_url=f"{endpoint.rstrip('/')}/openai/v1/",
-            api_key=_require_env("AZURE_OPENAI_API_KEY"),
-            timeout=REQUEST_TIMEOUT_SECONDS,
-            max_retries=2
+            base_url=(f"{settings.azure_openai_endpoint.rstrip('/')}/openai/v1/"),
+            api_key=settings.azure_openai_api_key.get_secret_value(),
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
         )
 
     return _client
 
 
-def generate_answer(
-    query: str,
-    context: str,
-    source: str
-) -> str:
+def _deployment() -> str:
+    deployment = get_settings().azure_openai_deployment
+
+    if not deployment:
+        raise RuntimeError("Azure OpenAI is not configured")
+
+    return deployment
+
+
+def generate_answer(query: str, context: str, source: str) -> str:
 
     if not context:
-        return (
-            "I couldn't find relevant information "
-            "in the available knowledge base."
-        )
+        return "I couldn't find relevant information in the available knowledge base."
 
     system_prompt = """
 You are Leyline, a secure enterprise IT helpdesk assistant.
@@ -98,9 +86,7 @@ Knowledge-base source:
 """
 
     response = get_client().responses.create(
-        model=_require_env("AZURE_OPENAI_DEPLOYMENT"),
-        instructions=system_prompt,
-        input=user_prompt
+        model=_deployment(), instructions=system_prompt, input=user_prompt
     )
 
     return response.output_text

@@ -1,12 +1,15 @@
 import os
+import tempfile
 
 import pytest
 
-# The LLM module validates configuration at import time, so dummy values
-# must exist before the app is imported. No real calls are made in tests.
-os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://example.invalid/")
-os.environ.setdefault("AZURE_OPENAI_API_KEY", "test-key")
-os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "test-deployment")
+# Configuration is read when modules are imported, so test values must be
+# in the environment first. No real model calls are made in tests.
+os.environ["LEYLINE_ENV"] = "test"
+os.environ["AZURE_OPENAI_ENDPOINT"] = "https://example.invalid/"
+os.environ["AZURE_OPENAI_API_KEY"] = "test-key"
+os.environ["AZURE_OPENAI_DEPLOYMENT"] = "test-deployment"
+os.environ["LOG_DIR"] = tempfile.mkdtemp(prefix="leyline-test-logs-")
 
 
 @pytest.fixture
@@ -19,23 +22,19 @@ def llm_calls(monkeypatch):
         return "stub answer"
 
     monkeypatch.setattr(
-        "services.chat_service.generate_answer", fake_generate_answer
+        "leyline.services.chat_service.generate_answer", fake_generate_answer
     )
     return calls
 
 
 @pytest.fixture
-def client(llm_calls, monkeypatch, tmp_path):
-    from services.rate_limiter import rate_limiter
+def client(llm_calls, monkeypatch):
+    from leyline.app import create_app
+    from leyline.services.rate_limiter import rate_limiter
 
     rate_limiter.requests.clear()
-    # Keep test events out of the real security log.
-    monkeypatch.setattr(
-        "services.chat_service.log_security_event", lambda **kwargs: None
-    )
 
-    from app import app
-
+    app = create_app()
     app.config.update(TESTING=True)
     with app.test_client() as test_client:
         yield test_client

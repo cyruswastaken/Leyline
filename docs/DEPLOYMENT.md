@@ -13,19 +13,24 @@ The recommended cloud architecture uses Azure App Service, Microsoft Entra ID, A
 7. Configure application settings and deploy the Flask application.
 8. Send diagnostic logs to Log Analytics and validate the security test matrix.
 
-The complete button-by-button walkthrough is in [rag-helpdesk-lab-guide.txt](rag-helpdesk-lab-guide.txt).
+A step-by-step, infrastructure-as-code deployment replaces the earlier portal walkthrough in Phase 7 of the [roadmap](ROADMAP.md). Nothing below has been deployed yet.
 
 ## Application settings
 
-For the current application code, configure:
+For the current application code, configure (see [`.env.example`](../.env.example) for all options):
 
 | Setting | Description |
 | --- | --- |
+| `LEYLINE_ENV` | Set to `production` (the container image default) |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key (move to Key Vault / managed identity) |
 | `AZURE_OPENAI_DEPLOYMENT` | Chat model deployment name |
 
-The older portal walkthrough contains additional settings for the Azure Search-based variant. Keep those settings aligned with the code actually deployed.
+In production mode the app refuses to start if the model settings are missing or `FLASK_DEBUG` is on. Use `/healthz` as the liveness probe and `/readyz` as the readiness probe.
+
+## Container
+
+The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI. Do not deploy the current version beyond a private test: it has no authentication yet.
 
 ## Monitoring
 
@@ -48,4 +53,4 @@ Azure OpenAI diagnostic logs may contain metadata rather than prompt and respons
 - Remove test users, groups, deployments, and diagnostic workspaces that are no longer needed.
 - Rotate or revoke all lab keys during teardown.
 
-For the exact portal cleanup sequence and free-trial guidance, use Lab 10 in the [Portal lab guide](rag-helpdesk-lab-guide.txt).
+Teardown will be a single scripted command once the infrastructure code exists (Phase 7).

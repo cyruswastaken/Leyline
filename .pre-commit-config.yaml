@@ -1,0 +1,22 @@
+# Install with: pre-commit install
+# Hooks run the tools from the active virtualenv so versions always match
+# requirements-dev.txt and CI.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: python -m ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: python -m ruff format
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: python -m mypy
+        language: system
+        types: [python]
+        pass_filenames: false

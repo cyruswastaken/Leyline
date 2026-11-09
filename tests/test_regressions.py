@@ -4,12 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from services.document_loader import parse_document
+from leyline.services.document_loader import parse_document
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 # --- Critical: data exposure through debug routes -------------------------
+
 
 @pytest.mark.parametrize(
     "path",
@@ -26,20 +27,18 @@ def test_document_dump_and_role_in_url_routes_are_gone(client, path):
 
 
 def test_flask_debug_is_off_by_default(client):
-    from app import app
-
-    assert app.debug is False
+    assert client.application.debug is False
 
 
-def test_app_does_not_hardcode_debug_true():
-    assert "debug=True" not in (ROOT / "app.py").read_text(encoding="utf-8")
+def test_source_does_not_hardcode_debug_true():
+    for path in (ROOT / "src").rglob("*.py"):
+        assert "debug=True" not in path.read_text(encoding="utf-8"), path
 
 
 # --- Critical: authorization before retrieval ------------------------------
 
-def test_employee_chat_never_sends_restricted_content_to_model(
-    client, llm_calls
-):
+
+def test_employee_chat_never_sends_restricted_content_to_model(client, llm_calls):
     response = client.post(
         "/chat",
         json={"message": "Describe the internal network architecture segments"},
@@ -52,6 +51,7 @@ def test_employee_chat_never_sends_restricted_content_to_model(
 
 
 # --- Critical: classification cannot be downgraded by body text ------------
+
 
 def test_access_level_header_cannot_be_overridden_by_body(tmp_path):
     doc = tmp_path / "evil.txt"
@@ -70,7 +70,7 @@ def test_access_level_header_cannot_be_overridden_by_body(tmp_path):
 
 
 def test_document_without_access_level_is_not_readable_by_anyone(tmp_path):
-    from services.authorization import filter_authorized_documents
+    from leyline.services.authorization import filter_authorized_documents
 
     doc = tmp_path / "nolabel.txt"
     doc.write_text("Document Title: X\n\nBody\n", encoding="utf-8")
@@ -81,13 +81,16 @@ def test_document_without_access_level_is_not_readable_by_anyone(tmp_path):
 
 # --- Critical: stored XSS on the monitoring dashboard ----------------------
 
+
 def test_monitoring_dashboard_does_not_inject_event_data_as_html():
-    html = (ROOT / "templates" / "monitoring.html").read_text(encoding="utf-8")
+    template = ROOT / "src" / "leyline" / "templates" / "monitoring.html"
+    html = template.read_text(encoding="utf-8")
     assert "row.innerHTML" not in html
     assert "${event." not in html
 
 
 # --- Bugs: documented status codes were actually 500 -----------------------
+
 
 def test_blocked_pattern_returns_403_not_500(client):
     response = client.post(
@@ -98,7 +101,7 @@ def test_blocked_pattern_returns_403_not_500(client):
 
 
 def test_rate_limit_returns_429_not_500(client):
-    from services.rate_limiter import RATE_LIMIT
+    from leyline.services.rate_limiter import RATE_LIMIT
 
     for _ in range(RATE_LIMIT):
         assert client.post("/chat", json={"message": "vpn"}).status_code == 200
@@ -123,9 +126,7 @@ def test_invalid_message_returns_400(client, body):
 
 
 def test_non_json_body_returns_400(client):
-    response = client.post(
-        "/chat", data="not json", content_type="text/plain"
-    )
+    response = client.post("/chat", data="not json", content_type="text/plain")
     assert response.status_code == 400
 
 
@@ -136,9 +137,8 @@ def test_oversized_message_is_rejected(client):
 
 # --- Bugs: relevance ------------------------------------------------------
 
-def test_unrelated_question_returns_no_answer_without_calling_model(
-    client, llm_calls
-):
+
+def test_unrelated_question_returns_no_answer_without_calling_model(client, llm_calls):
     response = client.post(
         "/chat", json={"message": "What is the airspeed of a swallow?"}
     )
@@ -146,28 +146,54 @@ def test_unrelated_question_returns_no_answer_without_calling_model(
     assert llm_calls == []
 
 
-# --- Bugs: health must not depend on LLM configuration ---------------------
-
-def test_health_endpoint_ok(client):
-    assert client.get("/health").status_code == 200
+# --- Health endpoints -------------------------------------------------------
 
 
-def test_app_imports_and_serves_health_without_llm_configuration():
+def test_liveness_ok(client):
+    assert client.get("/healthz").status_code == 200
+
+
+def test_readiness_ok_when_configured(client):
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ready"
+
+
+def test_app_starts_and_is_live_but_not_ready_without_llm_configuration(
+    tmp_path,
+):
+    import os
     import subprocess
     import sys
 
     code = (
-        "from app import app; "
-        "r = app.test_client().get('/health'); "
-        "assert r.status_code == 200"
+        "from leyline.app import create_app; "
+        "c = create_app().test_client(); "
+        "assert c.get('/healthz').status_code == 200; "
+        "assert c.get('/readyz').status_code == 503"
     )
-    env = {
-        k: v for k, v in __import__("os").environ.items()
-        if not k.startswith("AZURE_OPENAI")
-    }
-    # Run from a temp dir-independent root; .env must not be loaded.
-    result = subprocess.run(
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_OPENAI")}
+    result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", code],
-        cwd=ROOT, env=env, capture_output=True, text=True,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_retrieval_event_is_logged_with_metrics(client, monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        "leyline.services.chat_service.log_security_event",
+        lambda **kwargs: events.append(kwargs),
+    )
+    client.post("/chat", json={"message": "How do I set up the VPN?"})
+
+    retrieval = [e for e in events if e["event_type"] == "RETRIEVAL"]
+    assert len(retrieval) == 1
+    details = retrieval[0]["details"]
+    assert details["returned_count"] >= 1
+    assert details["latency_ms"] >= 0
+    assert details["candidate_count"] >= details["returned_count"]

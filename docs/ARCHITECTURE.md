@@ -23,12 +23,15 @@ Authorization occurs before chunking and retrieval. This ordering is essential: 
 
 ## Repository components
 
-- `app.py` exposes the Flask routes and local identity defaults.
+All code lives in `src/leyline/`.
+
+- `app.py` is the `create_app()` factory; `config.py` holds validated settings.
+- `web/` contains the Flask blueprints (chat, health, monitoring).
 - `services/chat_service.py` orchestrates the request pipeline.
 - `services/authorization.py` maps roles to access levels.
 - `services/document_loader.py` parses and chunks corpus files.
 - `services/retrieval.py` performs lightweight relevance scoring.
-- `services/LLM.py` calls the configured Azure OpenAI deployment.
+- `services/llm.py` calls the configured Azure OpenAI deployment.
 - `services/security.py` validates blocked patterns.
 - `services/rate_limiter.py` limits requests per identity.
 - `services/monitoring.py` stores and summarizes security events.
@@ -41,7 +44,7 @@ Authorization occurs before chunking and retrieval. This ordering is essential: 
 | `employee` | `general` |
 | `security_admin` | `general`, `restricted` |
 
-Every corpus document declares its access level in metadata. Unknown roles receive no documents.
+Every corpus document declares its access level in a leading header block. Metadata is read only from that block, so a line in the document body cannot change a document's classification. Documents without a recognised access level, and unknown roles, receive no access.
 
 ## Cloud deployment model
 
@@ -54,15 +57,16 @@ The Azure deployment extends this design with:
 - Azure OpenAI for embeddings and response generation
 - Log Analytics for diagnostic and security telemetry
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) and the [Portal lab guide](rag-helpdesk-lab-guide.txt) for implementation details.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the deployment outline. The target architecture is described in [ROADMAP.md](ROADMAP.md).
 
 ## Threats and limitations
 
 - Pattern-based prompt-injection checks cannot detect every rephrased attack.
 - The local rate limiter is in memory and is not suitable for multi-instance production deployments.
-- Local role defaults are not authentication; they exist for the lab application.
+- There is no authentication yet. `/chat` uses a fixed `local-user` / `employee` identity, and the `/monitoring*` routes are open. Both are addressed in Phase 1 of the [roadmap](ROADMAP.md).
+- Roles and identity are never accepted from request input; routes that did so were removed after the initial audit.
 - Secrets in local environment variables should be replaced with managed identity or Key Vault references in production.
 - The corpus is synthetic and has not been independently security tested.
 - Grounding reduces hallucination risk but does not prove factual correctness.
 
-Treat this project as a security lab and review all controls before handling real company data.
+The initial audit, its fixes and the remaining work are tracked in the [roadmap](ROADMAP.md). Every fixed vulnerability has a regression test in `tests/test_regressions.py`. Review all controls before handling real company data.

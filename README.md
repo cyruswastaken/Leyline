@@ -2,7 +2,7 @@
 
 Leyline is a security-focused enterprise IT helpdesk chatbot built with Flask and retrieval-augmented generation (RAG). It answers questions from an internal document corpus while enforcing document access by user role before content is sent to the language model.
 
-This repository is a learning and portfolio project. The included restricted documents are synthetic and must not be treated as real organizational policy or infrastructure documentation.
+This is a portfolio project being built to production standards. The included documents are synthetic and must not be treated as real organizational policy or infrastructure documentation.
 
 ## What the project demonstrates
 
@@ -20,37 +20,42 @@ This repository is a learning and portfolio project. The included restricted doc
 | [Usage guide](docs/USAGE.md) | Install, configure, run, and test Leyline locally |
 | [Architecture and security](docs/ARCHITECTURE.md) | Request flow, authorization boundary, and known risks |
 | [Azure deployment guide](docs/DEPLOYMENT.md) | Cloud deployment overview, configuration, monitoring, and teardown |
-| [Azure Portal lab guide](docs/rag-helpdesk-lab-guide.txt) | Detailed, numbered Azure Portal walkthrough |
 | [Development guide](docs/DEVELOPMENT.md) | Repository conventions and validation workflow |
+| [Roadmap](docs/ROADMAP.md) | Audit findings, target architecture and phased plan |
 
 ## Technology
 
-- Python 3.11
+- Python 3.11+ (container: 3.13)
 - Flask
 - Azure OpenAI
 - Microsoft Entra ID
 - Azure Blob Storage and Azure AI Search for the cloud deployment model
 - Vanilla JavaScript and server-rendered HTML
+- Docker, GitHub Actions, pytest, ruff, mypy
 
 ## Repository layout
 
 ```text
 .
-├── app.py
-├── services/
-├── templates/
+├── src/leyline/
+│   ├── app.py          # create_app() factory
+│   ├── config.py       # validated settings
+│   ├── web/            # Flask blueprints
+│   ├── services/       # pipeline logic
+│   └── templates/
 ├── corpus/
 │   ├── general/
 │   └── restricted/
 ├── tests/
 ├── docs/
-├── requirements.txt
-└── README.md
+├── Dockerfile
+├── compose.yaml
+└── pyproject.toml
 ```
 
 ## Project status
 
-Leyline is an educational lab, not a production-ready service. Review the [architecture and security notes](docs/ARCHITECTURE.md) before using it with real data.
+Leyline is under active development and is **not yet safe for real data**: there is no authentication yet. Phase 0 (security fixes, tests, CI, container) is complete; Phase 1 (identity and access) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
 
 ## License
 

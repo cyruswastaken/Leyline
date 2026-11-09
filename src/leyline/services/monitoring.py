@@ -1,22 +1,20 @@
 import ast
-from pathlib import Path
+from typing import Any
+
+from leyline.services.logger import LOG_FILE
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-LOG_FILE = BASE_DIR / "logs" / "security_events.log"
-
-
-def get_security_events() -> list:
+def get_security_events() -> list[dict[str, Any]]:
     """
     Read and return all valid security events.
     """
 
-    events = []
+    events: list[dict[str, Any]] = []
 
     if not LOG_FILE.exists():
         return events
 
-    with open(LOG_FILE, "r", encoding="utf-8") as file:
+    with open(LOG_FILE, encoding="utf-8") as file:
         for line in file:
             line = line.strip()
 
@@ -33,7 +31,7 @@ def get_security_events() -> list:
     return events
 
 
-def get_security_summary() -> dict:
+def get_security_summary() -> dict[str, Any]:
     """
     Return a summary of all security events.
     """
@@ -46,7 +44,7 @@ def get_security_summary() -> dict:
         "security_rules_triggered": 0,
         "rate_limits_exceeded": 0,
         "retrieval_requests": 0,
-        "no_results_found": 0
+        "no_results_found": 0,
     }
 
     for event in events:
@@ -70,7 +68,7 @@ def get_security_summary() -> dict:
     return summary
 
 
-def get_recent_events(limit: int = 10) -> list:
+def get_recent_events(limit: int = 10) -> list[dict[str, Any]]:
     """
     Return the most recent security events.
     """

@@ -24,6 +24,11 @@ dist/
 
 docs/*.txt
 
+CLAUDE.md
+DEPLOYMENT.md
+USAGE.md
+DEVELOPMENT.md
+
 *.log
 *.db
 *.sqlite

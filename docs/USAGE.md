@@ -1,85 +1,95 @@
 # Usage
 
-This guide covers local development and the behavior exposed by the Flask application.
+This guide covers running Leyline locally.
 
 ## Prerequisites
 
-- Python 3.11 or compatible
-- An Azure OpenAI deployment, or another compatible endpoint
-- A shell with access to the repository
+- Python 3.11 or newer (CI tests 3.11 and 3.13; the container uses 3.13)
+- Docker Desktop, if you want to use the container workflow
+- An Azure OpenAI deployment (or another OpenAI-compatible endpoint) to get
+  answers from `/chat`. Without one the app still starts; `/readyz` reports
+  not-ready and `/chat` fails when it needs the model.
 
-## Installation
+## Configuration
 
-Create and activate a virtual environment, then install the pinned dependencies:
+Copy `.env.example` to `.env` and fill in the Azure OpenAI values. Do not
+commit `.env`. All settings are validated at startup by
+[`config.py`](../src/leyline/config.py); the example file lists every option.
+
+`LEYLINE_ENV=production` refuses to start unless the model settings are
+present and `FLASK_DEBUG` is off.
+
+## Run with Docker
+
+```powershell
+docker compose up --build
+```
+
+The app listens on `http://127.0.0.1:8000/`. To also start Postgres, Redis,
+Keycloak, Azurite and Jaeger (not used by the app yet):
+
+```powershell
+docker compose --profile infra up --build
+```
+
+## Run with Python
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pip install --no-deps -e .
+python -m leyline.app
 ```
 
-## Configuration
-
-Create a local `.env` file. Do not commit it or share its contents.
-
-```text
-AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/
-AZURE_OPENAI_API_KEY=<api-key>
-AZURE_OPENAI_DEPLOYMENT=<deployment-name>
-```
-
-The application loads these values when the language-model service is imported and fails clearly when a required value is missing. Keep credentials in environment variables or a managed secret store; never place them in source files.
-
-## Running the application
-
-```powershell
-python app.py
-```
-
-Open `http://127.0.0.1:5000/` in a browser.
-
-The local application uses the role values defined in `services/authorization.py`. Authentication is represented by the local identity and role configured in `app.py`; production identity integration is described in the [deployment guide](DEPLOYMENT.md).
+This serves `http://127.0.0.1:5000/` using the Flask development server. Set
+`FLASK_DEBUG=true` only on a trusted machine; the debugger allows remote code
+execution.
 
 ## HTTP endpoints
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | Chat interface |
-| `GET` | `/health` | Health check |
+| `GET` | `/healthz` | Liveness: the process is up |
+| `GET` | `/readyz` | Readiness: model configured and corpus available (503 otherwise) |
 | `POST` | `/chat` | Process a message |
-| `GET` | `/documents` | List loaded documents |
-| `GET` | `/documents/<user_role>` | List documents allowed for a role |
-| `GET` | `/search/<user_role>?q=<query>` | Search authorized documents |
-| `GET` | `/monitoring` | Monitoring dashboard |
-| `GET` | `/monitoring/summary` | Security event summary |
-| `GET` | `/monitoring/events` | Recent security events |
+| `GET` | `/monitoring` | Monitoring dashboard (unauthenticated until Phase 1) |
+| `GET` | `/monitoring/summary` | Security event summary (unauthenticated until Phase 1) |
+| `GET` | `/monitoring/events` | Recent security events (unauthenticated until Phase 1) |
+
+Earlier versions exposed `/documents`, `/documents/<role>` and
+`/search/<role>`. They leaked restricted content and accepted the role from
+the URL, so they were removed.
 
 Example request:
 
 ```powershell
 Invoke-RestMethod `
   -Method Post `
-  -Uri http://127.0.0.1:5000/chat `
+  -Uri http://127.0.0.1:8000/chat `
   -ContentType "application/json" `
   -Body '{"message":"How should I protect my corporate password?"}'
 ```
 
-## Expected behavior
+## Current behavior
 
-- General employees can retrieve documents marked `Access Level: general`.
-- Security administrators can retrieve both `general` and `restricted` documents.
-- Blocked prompt-extraction and document-inventory patterns are rejected before retrieval.
-- Requests without relevant context return an unavailable response rather than an invented answer.
-- Excessive requests from one identity receive HTTP `429`.
+- There is no login yet. Every request is treated as user `local-user` with
+  role `employee`, which can read only `general` documents. Real
+  authentication arrives in Phase 1.
+- Blocked prompt-extraction patterns return HTTP 403 before retrieval.
+- Excessive requests from one identity return HTTP 429 (10 per 60 seconds by
+  default).
+- Invalid input returns HTTP 400: non-JSON bodies, non-string or empty
+  messages, and messages over 2,000 characters.
+- Requests without relevant context return an unavailable response rather
+  than an invented answer.
 
-## Validation checklist
+## Tests and checks
 
-1. `GET /health` returns HTTP 200.
-2. A general question returns content from a general document.
-3. An unknown question returns an unavailable response.
-4. An employee cannot retrieve restricted documents.
-5. A security administrator can retrieve restricted documents.
-6. A blocked-pattern request returns HTTP 403.
-7. The rate limiter returns HTTP 429 after the configured threshold.
-
-The detailed Azure identity and deployment test matrix is in the [Portal lab guide](rag-helpdesk-lab-guide.txt).
+```powershell
+pytest --cov      # tests
+ruff check .      # lint
+ruff format .     # formatting
+mypy              # strict type checking
+```
