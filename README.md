@@ -23,6 +23,7 @@ This is a portfolio project being built to production standards. The included do
 | [Architecture and security](docs/ARCHITECTURE.md) | Request flow, authorization boundary, and known risks |
 | [Azure deployment guide](docs/DEPLOYMENT.md) | Cloud deployment overview, configuration, monitoring, and teardown |
 | [Development guide](docs/DEVELOPMENT.md) | Repository conventions and validation workflow |
+| [Retrieval evaluation](docs/EVALUATION.md) | Golden set, metrics, results and the CI quality gate |
 | [Roadmap](docs/ROADMAP.md) | Audit findings, target architecture and phased plan |
 
 ## Technology
@@ -32,7 +33,8 @@ This is a portfolio project being built to production standards. The included do
 - Azure OpenAI
 - Microsoft Entra ID (Keycloak for local development)
 - Redis (sessions, rate limits)
-- PostgreSQL with pgvector, Azure Blob Storage (Azurite locally); Azure AI Search planned for the cloud deployment
+- PostgreSQL with pgvector (hybrid keyword + semantic search), Azure Blob Storage (Azurite locally); Azure AI Search planned for the cloud deployment
+- Ollama / any OpenAI-compatible endpoint for embeddings (`nomic-embed-text` locally)
 - Vanilla JavaScript and server-rendered HTML
 - Docker, GitHub Actions, pytest, ruff, mypy
 
@@ -64,7 +66,7 @@ This is a portfolio project being built to production standards. The included do
 
 ## Project status
 
-Leyline is under active development and is **not yet safe for real data**. Phases 0 (security fixes, tests, CI, container), 1 (identity and access) and 2 (database, document ingestion, per-document ACLs) are complete; Phase 3 (hybrid retrieval and evaluation) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
+Leyline is under active development and is **not yet safe for real data**. Phases 0 (security fixes, tests, CI, container), 1 (identity and access), 2 (database, document ingestion, per-document ACLs) and 3 (hybrid retrieval and an evaluation gate) are complete; Phase 4 (chat experience: conversations, streaming, citations) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
 
 ## License
 

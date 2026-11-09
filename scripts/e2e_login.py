@@ -14,6 +14,7 @@ Run: python scripts/e2e_login.py
 from __future__ import annotations
 
 import html
+import os
 import re
 import sys
 import time
@@ -197,6 +198,56 @@ def main() -> int:
             f"{user} was given a document they may not read: {got!r}",
         )
     print(f"ok  {len(cases)} access checks on the sample corpus")
+
+    # --- semantic retrieval (needs an embedding model; opt in with E2E_SEMANTIC=1) -
+    if os.environ.get("E2E_SEMANTIC") == "1":
+        ready = requests.get(f"{APP}/readyz", timeout=15).json()
+        check(
+            ready["optional"]["embeddings_configured"],
+            "E2E_SEMANTIC=1 but the app has no embedding model configured",
+        )
+        meaning_cases = [
+            # (user, question sharing no wording with the answer, expected top document)
+            (
+                "alice.employee",
+                "Someone stole my backpack with my work laptop inside",
+                "Reporting a Lost or Stolen Device",
+            ),
+            (
+                "alice.employee",
+                "My partner and I are expecting a baby, how much time off can we take?",
+                "Parental Leave",
+            ),
+            (
+                "alice.employee",
+                "How do I get a guest into the building for a meeting?",
+                "Registering Visitors",
+            ),
+            (
+                "hank.hr",
+                "How are performance ratings compared fairly across teams?",
+                "Performance Review Process",
+            ),
+            ("alice.employee", "What is the capital of Australia?", None),
+        ]
+        for user, question, expected in meaning_cases:
+            got = stack.retrieved(user, question)
+            check(
+                got == expected,
+                f"{user} asked {question!r}: expected {expected!r}, got {got!r}",
+            )
+        # the same paraphrase must not unlock a document the asker may not read
+        leaked = stack.retrieved(
+            "alice.employee",
+            "How are performance ratings compared fairly across teams?",
+        )
+        check(
+            leaked != "Performance Review Process",
+            "semantic search leaked an HR-only document",
+        )
+        print(
+            f"ok  {len(meaning_cases) + 1} semantic retrieval checks (paraphrases, refusal, no leak)"
+        )
 
     # --- administrators: authorization and validation ----------------------------
     check(

@@ -150,6 +150,13 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Done when:** baseline metrics are recorded, and CI fails on a retrieval regression or on **any** ACL leak.
 
+**Phase 3 status: complete.** Delivered as specified: hybrid search (pgvector + Postgres full-text, reciprocal-rank fusion) with the ACL predicate inside both legs, relevance floors, a per-document cap, the database re-authorization step, a parametrized `SearchIndex` contract suite, an evaluation harness with a 78-question golden set, and a CI gate that fails on a regression or any ACL leak. Results ([EVALUATION.md](EVALUATION.md)): recall@5 0.796 -> 1.000, MRR 0.640 -> 0.936, correct refusals 25% -> 83%, zero ACL leaks. Differences from the plan:
+- **Baseline first.** The harness was built and the keyword baseline recorded before any retrieval change, so every gain is measured.
+- **Offline hybrid evals.** Real embeddings are recorded once into `evals/embeddings.json` and replayed in CI (no model needed there). The cache must be re-recorded when the corpus, chunker, model or prefixes change.
+- **Embedding model: `nomic-embed-text` via Ollama** (768 dimensions, fixed in the schema by migration `0002`, which also adds an HNSW index and flags stale vectors for re-index). OpenAI/Azure `text-embedding-3` works at 768 dimensions.
+- **Groundedness and citation accuracy are not measured yet.** They need the answer-generation path and structured citations (Phase 4); this phase measures retrieval, refusal and permission safety.
+- **Found along the way:** Azurite was not persisting blobs (volume not used), tie-breaking by random ids made results irreproducible, and the keyword floor must not apply when there is no vector leg.
+
 ### Phase 4: Chat experience (about 2 weeks)
 - Persistent conversations, follow-up query rewriting, token budgeting, retention setting.
 - SSE streaming with cancel; timeouts, retries and a circuit breaker around the LLM; clear degraded-mode messages.

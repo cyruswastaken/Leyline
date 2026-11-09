@@ -32,6 +32,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from leyline.constants import EMBEDDING_DIMENSIONS
+
 # Reserved ACL entry meaning "any signed-in user". Only knowledge-base admins
 # can set it, and every change is audited.
 EVERYONE_GROUP = "*"
@@ -148,6 +150,13 @@ class Chunk(Base):
         UniqueConstraint("version_id", "chunk_index", name="uq_chunks_version_index"),
         Index("ix_chunks_document_id", "document_id"),
         Index("ix_chunks_content_tsv", "content_tsv", postgresql_using="gin"),
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_with={"m": 16, "ef_construction": 64},
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -160,9 +169,7 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     heading: Mapped[str | None] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text)
-    # Unconstrained dimension for now; Phase 3 fixes it (and adds an ANN
-    # index) once the embedding model is chosen.
-    embedding: Mapped[Any | None] = mapped_column(Vector())
+    embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIMENSIONS))
     content_tsv: Mapped[Any] = mapped_column(
         TSVECTOR, Computed(TSV_EXPRESSION, persisted=True)
     )

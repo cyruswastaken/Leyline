@@ -552,8 +552,10 @@ class IngestionService:
     def _embed(self, drafts: list[ChunkDraft]) -> list[list[float]] | None:
         if self._embedder is None:
             return None
+        prefix = self._settings.embedding_document_prefix
         texts = [
-            f"{d.heading}\n{d.content}" if d.heading else d.content for d in drafts
+            prefix + (f"{d.heading}\n{d.content}" if d.heading else d.content)
+            for d in drafts
         ]
         size = self._settings.embedding_batch_size
         vectors: list[list[float]] = []
@@ -566,6 +568,13 @@ class IngestionService:
         dimensions = {len(v) for v in vectors}
         if len(dimensions) != 1 or 0 in dimensions:
             raise RuntimeError("embedding provider returned inconsistent dimensions")
+        expected = self._settings.embedding_dimensions
+        if dimensions != {expected}:
+            raise RuntimeError(
+                f"embedding model returned {dimensions.pop()}-dimension vectors but "
+                f"the schema stores {expected}; use a {expected}-dimension model or "
+                "set EMBEDDING_SEND_DIMENSIONS=true if the API can truncate"
+            )
         if any(not math.isfinite(x) for v in vectors for x in v):
             raise RuntimeError("embedding provider returned non-finite values")
         return vectors

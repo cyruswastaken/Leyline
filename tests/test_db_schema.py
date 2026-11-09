@@ -8,6 +8,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import DBAPIError
 
+from leyline.constants import EMBEDDING_DIMENSIONS
 from leyline.db import migrate
 from leyline.db.models import Base
 
@@ -191,29 +192,104 @@ def test_full_text_column_is_generated_from_heading_and_content(db):
     assert matches == 1  # words from the heading and the body both match
 
 
-def test_vectors_of_any_dimension_round_trip(db):
+def _vector_literal(size: int, value: float = 0.5) -> str:
+    return "[" + ",".join([str(value)] * size) + "]"
+
+
+def _insert_chunk(connection, document, version, index, vector):
+    connection.execute(
+        text(
+            "INSERT INTO chunks (id, document_id, version_id, chunk_index, "
+            "content, embedding) VALUES (:id, :d, :v, :i, 'x', :vec)"
+        ),
+        {"id": uuid.uuid4(), "d": document, "v": version, "i": index, "vec": vector},
+    )
+
+
+def test_vectors_have_exactly_the_configured_dimension(db):
     with db.engine.begin() as connection:
         document = _document(connection)
         version = _version(connection, document)
-        for index, vector in enumerate(("[1,2,3]", "[0.5,0.25]")):
-            connection.execute(
-                text(
-                    "INSERT INTO chunks (id, document_id, version_id, chunk_index, "
-                    "content, embedding) VALUES (:id, :d, :v, :i, 'x', :vec)"
-                ),
-                {
-                    "id": uuid.uuid4(),
-                    "d": document,
-                    "v": version,
-                    "i": index,
-                    "vec": vector,
-                },
-            )
-        stored = (
-            connection.execute(
-                text("SELECT embedding::text FROM chunks ORDER BY chunk_index")
-            )
-            .scalars()
-            .all()
+        _insert_chunk(
+            connection, document, version, 0, _vector_literal(EMBEDDING_DIMENSIONS)
         )
-    assert stored == ["[1,2,3]", "[0.5,0.25]"]
+        stored = connection.execute(
+            text("SELECT vector_dims(embedding) FROM chunks")
+        ).scalar()
+    assert stored == EMBEDDING_DIMENSIONS == 768
+
+
+@pytest.mark.parametrize("size", [3, 767, 769, 1536])
+def test_vectors_of_any_other_size_are_rejected(db, size):
+    with (
+        pytest.raises(DBAPIError, match="expected 768 dimensions"),
+        db.engine.begin() as connection,
+    ):
+        document = _document(connection)
+        version = _version(connection, document)
+        _insert_chunk(connection, document, version, 0, _vector_literal(size))
+
+
+def test_chunks_without_an_embedding_are_still_allowed(db):
+    with db.engine.begin() as connection:
+        document = _document(connection)
+        version = _version(connection, document)
+        connection.execute(
+            text(
+                "INSERT INTO chunks (id, document_id, version_id, chunk_index, content) "
+                "VALUES (:id, :d, :v, 0, 'keyword only')"
+            ),
+            {"id": uuid.uuid4(), "d": document, "v": version},
+        )
+        assert connection.execute(text("SELECT count(*) FROM chunks")).scalar() == 1
+
+
+def test_an_hnsw_cosine_index_backs_vector_search(db):
+    with db.engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_chunks_embedding_hnsw'"
+            )
+        ).scalar()
+    assert definition is not None
+    assert "USING hnsw" in definition and "vector_cosine_ops" in definition
+
+
+def test_migration_0002_drops_stale_vectors_and_flags_their_versions(scratch_database):
+    """Phase 2 allowed vectors of any size; upgrading must not leave unusable ones."""
+    engine = scratch_database.engine
+    migrate.upgrade(engine, "0001_documents_and_ingestion")
+    document, version = uuid.uuid4(), uuid.uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO documents (id, title, created_by) VALUES (:d, 't', 'u')"),
+            {"d": document},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_versions (id, document_id, version, filename, "
+                "content_type, size_bytes, sha256, blob_key, status, uploaded_by, "
+                "embedding_model, embedding_dimensions) VALUES (:v, :d, 1, 'f', "
+                "'text/plain', 1, 'x', 'k', 'indexed', 'u', 'old-model', 3)"
+            ),
+            {"v": version, "d": document},
+        )
+        _insert_chunk(connection, document, version, 0, "[1,2,3]")
+
+    migrate.upgrade(engine)
+
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT embedding FROM chunks")).scalar() is None
+        flagged = connection.execute(
+            text("SELECT embedding_model, embedding_dimensions FROM document_versions")
+        ).one()
+        assert tuple(flagged) == (None, None)  # shows up as "needs re-index"
+        column = connection.execute(
+            text(
+                "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                "WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
+            )
+        ).scalar()
+    assert column == "vector(768)"
+    migrate.downgrade(engine, "0001_documents_and_ingestion")  # and it is reversible
+    assert not migrate.is_current(engine)

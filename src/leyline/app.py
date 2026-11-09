@@ -6,7 +6,6 @@ from redis import Redis
 from redis.exceptions import RedisError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from leyline.adapters.search_postgres import PostgresSearchIndex
 from leyline.auth.access import current_principal, load_principal
 from leyline.auth.csrf import SAFE_METHODS, csrf_failure_reason
 from leyline.auth.oidc import init_oidc
@@ -31,7 +30,12 @@ from leyline.ports.search import SearchIndex
 from leyline.ratelimit import RedisRateLimiter
 from leyline.security_headers import init_security_headers
 from leyline.services.logger import log_security_event
-from leyline.wiring import build_blob_store, build_database, build_embedder
+from leyline.wiring import (
+    build_blob_store,
+    build_database,
+    build_embedder,
+    build_search_index,
+)
 
 # Probes must keep working under load and without a session store.
 _RATE_LIMIT_EXEMPT_ENDPOINTS = frozenset({"health.liveness", "health.readiness"})
@@ -80,7 +84,7 @@ def create_app(
     blob_store = blob_store or build_blob_store(settings)
     embedder = embedder or build_embedder(settings)
     if search_index is None and database is not None:
-        search_index = PostgresSearchIndex(database)
+        search_index = build_search_index(settings, database, embedder)
     app.extensions[DATABASE_KEY] = database
     app.extensions[BLOB_KEY] = blob_store
     app.extensions[EMBEDDER_KEY] = embedder

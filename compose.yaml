@@ -41,6 +41,8 @@ services:
         required: false
     ports:
       - "127.0.0.1:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach Ollama running on the host
     read_only: true
     tmpfs:
       - /tmp
@@ -94,6 +96,8 @@ services:
     env_file:
       - path: .env
         required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     read_only: true
     tmpfs:
       - /tmp
@@ -160,7 +164,10 @@ services:
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.33.0
-    command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+    # --location makes Azurite actually use the mounted volume; without it blobs
+    # live in the container and vanish on recreate while Postgres still points
+    # at them.
+    command: azurite-blob --blobHost 0.0.0.0 --location /data --skipApiVersionCheck
     ports:
       - "127.0.0.1:10000:10000"
     volumes:

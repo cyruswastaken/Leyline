@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import tempfile
 from collections.abc import Sequence
 from typing import Any
@@ -11,6 +12,7 @@ os.environ["LOG_DIR"] = tempfile.mkdtemp(prefix="leyline-test-logs-")
 
 from leyline.auth.principal import AppRole, Principal
 from leyline.config import Settings
+from leyline.constants import EMBEDDING_DIMENSIONS
 from leyline.ports.search import SearchHit
 
 CSRF_HEADER = "X-CSRF-Token"
@@ -65,6 +67,10 @@ def make_settings(**overrides: object) -> Settings:
         "oidc_client_secret": "test-secret",
         "log_dir": os.environ["LOG_DIR"],
         "rate_limit_ip_requests": 1000,
+        # Loose relevance floors: most tests use hash-based fake vectors that
+        # carry no meaning, so they exercise keyword behaviour.
+        "search_min_similarity": 0.0,
+        "search_min_lexical": 0.0,
         # Retried jobs become runnable immediately unless a test says otherwise.
         "ingest_backoff_seconds": 0,
     }
@@ -86,9 +92,13 @@ def login_as(client, principal: Principal) -> str:
 
 
 class FakeEmbedder:
-    """Deterministic 8-dimension embeddings, with injectable failures."""
+    """Deterministic schema-sized embeddings, with injectable failures.
 
-    dimensions = 8
+    The vectors carry no meaning (they come from a hash), so they are only good
+    for exercising plumbing: storage, dimensions, ordering and failure handling.
+    """
+
+    dimensions = EMBEDDING_DIMENSIONS
 
     def __init__(
         self,
@@ -110,8 +120,8 @@ class FakeEmbedder:
         return [self._vector(text) for text in texts]
 
     def _vector(self, text: str) -> list[float]:
-        digest = hashlib.sha256(text.encode()).digest()
-        return [(byte / 127.5) - 1.0 for byte in digest[: self.dimensions]]
+        digest = hashlib.shake_256(text.encode()).digest(self.dimensions)
+        return [(byte / 127.5) - 1.0 for byte in digest]
 
 
 class FakeSearchIndex:
@@ -152,3 +162,43 @@ def person(
         groups=frozenset(groups),
         roles=roles or frozenset({AppRole.USER}),
     )
+
+
+class ConceptEmbedder:
+    """A tiny, controllable stand-in for a semantic model.
+
+    Words listed under the same concept share one axis, so texts that use
+    *different words* for the same idea (``stolen`` / ``took my backpack``)
+    end up close together, while texts about different concepts are nearly
+    orthogonal. A little deterministic noise keeps vectors non-zero. This lets
+    tests exercise semantic retrieval logic without downloading a model.
+    """
+
+    model = "concept-test-model"
+
+    def __init__(self, concepts: dict[str, set[str]]) -> None:
+        self._axes = {name: i for i, name in enumerate(concepts)}
+        self._words = {w: name for name, ws in concepts.items() for w in ws}
+        self.calls: list[str] = []
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls.extend(texts)
+        return [self._vector(text) for text in texts]
+
+    def _vector(self, text: str) -> list[float]:
+        noise = hashlib.shake_256(text.encode()).digest(EMBEDDING_DIMENSIONS)
+        vector = [(b / 255.0 - 0.5) * 0.002 for b in noise]
+        for word in re.findall(r"[a-z0-9]+", text.lower()):
+            concept = self._words.get(word)
+            if concept is not None:
+                vector[self._axes[concept]] += 1.0
+        return vector
+
+
+DEFAULT_CONCEPTS: dict[str, set[str]] = {
+    "theft": {"lost", "stolen", "took", "taken", "backpack", "theft", "missing"},
+    "baby": {"baby", "parental", "newborn", "expecting", "maternity", "infant"},
+    "holiday": {"holiday", "vacation", "leave", "annual"},
+    "network": {"wifi", "wireless", "network", "internet"},
+    "printing": {"printer", "print", "jam", "toner"},
+}

@@ -63,6 +63,17 @@ Integration tests (ACLs, ingestion, the worker, the admin API, migrations) use a
 - `test_ingestion_service.py` covers the document lifecycle, retries, leases and concurrent workers.
 - What fakes cannot prove (Authlib's token verification, Keycloak claim mapping) is covered by `python scripts/e2e_login.py` against the running compose stack; CI runs it on every push.
 
+## Retrieval evaluation
+
+Retrieval changes are judged by numbers: `python -m leyline.evals` (details, results and the
+record/replay workflow in [EVALUATION.md](EVALUATION.md)). CI enforces `evals/thresholds.json`.
+Never lower a floor to make a change pass, never edit golden questions to fit the search, and
+re-record `evals/embeddings.json` (needs a local model) whenever the corpus, chunker, golden set,
+model or a prefix changes. A stale cache fails loudly with the exact command to run.
+
+The full suite takes about 6 minutes (it seeds real Postgres databases); run a subset while
+iterating, e.g. `pytest tests/test_hybrid_search.py -q`.
+
 ## Dependencies
 
 `pyproject.toml` declares dependency ranges. `requirements.txt` is the pinned

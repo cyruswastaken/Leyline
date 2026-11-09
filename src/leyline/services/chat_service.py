@@ -86,6 +86,11 @@ def process_message(
         details={
             "selected_source": hits[0].title if hits else None,
             "top_score": round(hits[0].score, 4) if hits else 0,
+            "top_similarity": (
+                round(hits[0].similarity, 4)
+                if hits and hits[0].similarity is not None
+                else None
+            ),
             "returned_count": len(hits),
             "candidate_count": len(candidates),
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),

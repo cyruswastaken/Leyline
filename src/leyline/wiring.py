@@ -11,10 +11,12 @@ import logging
 
 from leyline.adapters.blob_azure import AzureBlobStore
 from leyline.adapters.embeddings_openai import OpenAICompatibleEmbedder
+from leyline.adapters.search_postgres import PostgresSearchIndex, SearchOptions
 from leyline.config import Settings
 from leyline.db.database import Database
 from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
+from leyline.ports.search import SearchIndex
 
 
 def configure_logging() -> None:
@@ -40,10 +42,22 @@ def build_blob_store(settings: Settings) -> BlobStore | None:
     )
 
 
+def build_search_index(
+    settings: Settings, database: Database, embedder: Embedder | None
+) -> SearchIndex:
+    """Hybrid when an embedder is configured, keyword-only otherwise."""
+    return PostgresSearchIndex(
+        database, embedder, SearchOptions.from_settings(settings)
+    )
+
+
 def build_embedder(settings: Settings) -> Embedder | None:
     base_url, model = settings.embedding_base_url, settings.embedding_model
     if not base_url or not model:
         return None
+    requested_dimensions = (
+        settings.embedding_dimensions if settings.embedding_send_dimensions else None
+    )
     return OpenAICompatibleEmbedder(
         base_url=base_url,
         api_key=(
@@ -52,5 +66,5 @@ def build_embedder(settings: Settings) -> Embedder | None:
             else ""
         ),
         model=model,
-        dimensions=settings.embedding_dimensions,
+        dimensions=requested_dimensions,
     )

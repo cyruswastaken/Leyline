@@ -15,7 +15,7 @@ Browser
   -> route: login_required / require_roles  (deny by default)
   -> per-user rate limit                    (Redis)
   -> blocked-pattern validation
-  -> permission-aware search                (ACL predicate inside the SQL query)
+  -> permission-aware hybrid search         (keyword + vector legs, ACL predicate inside each query)
   -> re-authorization of every hit          (against the database, just before use)
   -> grounded language-model response
   -> security event logging
@@ -66,7 +66,7 @@ Routes opt in with `@login_required` or `@require_roles(...)` (`auth/access.py`)
 | `documents` | Title, creator, pointer to the live version, soft-delete marker, optional external id |
 | `document_versions` | One row per uploaded file: hash, size, stored-file key, status (`pending`, `processing`, `indexed`, `failed`, `superseded`), embedding model used |
 | `document_acl` | One row per (document, group). **The single source of truth for who may read** |
-| `chunks` | Searchable text with its heading, a generated full-text column and an optional embedding |
+| `chunks` | Searchable text with its heading, a generated full-text column and an optional 768-dimension embedding (HNSW-indexed) |
 | `ingestion_jobs` | The durable work queue (ingest and purge jobs) |
 | `audit_events` | Administrative actions: who uploaded, re-versioned, re-indexed, re-permissioned or deleted what |
 
@@ -93,6 +93,29 @@ Because the ACL is queried at search time rather than copied into the index, **c
 - **Safe re-versioning.** A new version stays invisible until it is fully indexed, then replaces the old chunks and becomes current in one transaction, so searches never see an empty or half-indexed document. A slow older version that finishes after a newer one is marked `superseded` instead of overwriting it.
 - **Reliable jobs.** Jobs commit atomically with the document state. Workers claim with `FOR UPDATE SKIP LOCKED`, failures retry with exponential back-off, unusable files fail immediately without retries, a crashed worker's job is reclaimed after a lease timeout, and a fencing token stops a worker that lost its lease from finishing someone else's job. Failures are visible in the admin page.
 - **Embeddings are optional** and pluggable (any OpenAI-compatible endpoint). Each version records the model used, so a model change is detected and offered as a re-index.
+
+## Retrieval
+
+`PostgresSearchIndex` (behind the `SearchIndex` port) runs two legs over the `chunks` table:
+
+- **Keyword:** `ts_rank_cd` over a generated full-text column (OR semantics; only `[a-z0-9]` tokens
+  reach the query, so user text cannot inject tsquery operators).
+- **Semantic:** cosine similarity over a fixed-size `vector(768)` column with an HNSW index. The
+  query is embedded with the same model (and task prefix) as the documents. pgvector's
+  iterative scan keeps the index scanning until enough *readable* rows are found, so a selective
+  permission filter cannot starve a user of results.
+
+Each leg applies `readable_by(principal)`, current-version and not-deleted conditions **inside
+its own SQL**, so an unreadable chunk can never enter either candidate list. The lists are fused
+with reciprocal-rank fusion (RRF), then capped at two chunks per document. Fused scores are
+relative and cannot say "nothing relevant", so relevance is gated on the underlying signals: a
+chunk is a candidate only if its cosine similarity (or, in hybrid mode, keyword rank) clears a
+floor. Every hit is still re-checked with `authorize_hits` before it reaches the prompt.
+
+Failure behaviour: with no embedder, or if embedding the question fails, search degrades to full
+keyword search (the keyword floor is not applied then); evaluations run in a strict mode that
+refuses to degrade silently. Tie-breaks are deterministic (title, chunk position), so results are
+reproducible. Quality is measured and gated in CI; see [EVALUATION.md](EVALUATION.md).
 
 ## Sessions
 
@@ -126,6 +149,7 @@ All code lives in `src/leyline/`.
 - `ingestion/` holds the parsers, chunker, validation, the job queue and the document lifecycle service.
 - `worker.py` is the ingestion worker; `seed.py` imports the sample corpus through the normal ingestion path.
 - `services/` holds authorization, the chat pipeline, audit, security rules and the model call.
+- `evals/` (package `leyline.evals`) is the retrieval evaluation harness; its data (golden questions, thresholds, recorded embeddings) lives in the top-level `evals/` directory.
 - `security_headers.py` sets CSP and the other headers; `ratelimit.py` is the Redis limiter.
 - `corpus/` contains the synthetic documents (49 across IT, HR, Finance, Security and Facilities).
 
@@ -146,7 +170,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the outline and [ROADMAP.md](ROADMAP.md) 
 
 - **User group revocation lag.** A person's *groups and roles* are captured at sign-in. Removing someone from a group in the identity provider takes effect at their next sign-in or when the session expires (at most 12 hours by default). *Document-side* changes (ACL edits, deletions) do apply immediately. Shorter lifetimes or back-channel logout can narrow the window.
 - **Administrators see metadata.** `kb_admin` can see titles, filenames and ACLs of every document, including restricted ones, but never their content.
-- **Keyword retrieval only.** Search is Postgres full-text with OR semantics; vector and hybrid search with relevance thresholds arrive in Phase 3, so weakly related documents can still be selected.
+- **Relevance floors are model-specific.** The shipped floors are calibrated for `nomic-embed-text`; another model needs a re-calibration sweep. Near-topic out-of-scope questions ("can I bring my dog to work?") can still return loosely related documents. Without an embedding model, search is keyword-only and refuses far less.
 - **Parsing runs in the worker process.** Inputs are bounded and validated, but a maliciously crafted PDF could still consume CPU/memory in the worker; the job lease limits the blast radius. Sandboxing parsers is a later hardening step.
 - **Prompt injection.** Pattern-based checks cannot detect every rephrased attack, and retrieved text is not yet clearly delimited as untrusted (Phase 4 adds layered guardrails).
 - **Audit trail.** Administrative actions are audited in Postgres, but security events (logins, denials, retrievals) still go to a local file, and `audit_events` is not yet append-only (Phase 6).

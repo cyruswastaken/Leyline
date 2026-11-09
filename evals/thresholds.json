@@ -1,0 +1,29 @@
+{
+  "_comment": "Regression floors per search index, measured on the 78-case golden set (2026-11-09) with ~0.03-0.05 of slack. Results are deterministic (ties break by title and chunk position; hybrid replays recorded embeddings from evals/embeddings.json). Raise the floors when retrieval improves; never lower them to make a change pass. acl_leaks must always be 0.",
+  "fts": {
+    "min": {
+      "recall@1": 0.5,
+      "recall@3": 0.72,
+      "recall@5": 0.78,
+      "mrr": 0.62,
+      "refusal_rate": 0.23,
+      "restricted_pass_rate": 1.0
+    },
+    "max": {
+      "acl_leaks": 0
+    }
+  },
+  "hybrid": {
+    "min": {
+      "recall@1": 0.85,
+      "recall@3": 0.95,
+      "recall@5": 0.98,
+      "mrr": 0.9,
+      "refusal_rate": 0.75,
+      "restricted_pass_rate": 1.0
+    },
+    "max": {
+      "acl_leaks": 0
+    }
+  }
+}

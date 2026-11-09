@@ -98,7 +98,7 @@ def test_an_uploaded_document_becomes_searchable_after_the_worker_runs(
     assert version.chunk_count == 2
     assert version.indexed_at is not None
     assert version.embedding_model == "fake-embed-1"
-    assert version.embedding_dimensions == 8
+    assert version.embedding_dimensions == 768
     assert rows(db, IngestionJob)[0].state == "succeeded"
 
 
@@ -112,7 +112,7 @@ def test_chunks_carry_headings_and_vectors(ingestion, db, drain):
         "VPN guide > Setup",
         "VPN guide > Troubleshooting",
     ]
-    assert all(c.embedding is not None and len(c.embedding) == 8 for c in chunks)
+    assert all(c.embedding is not None and len(c.embedding) == 768 for c in chunks)
 
 
 def test_without_an_embedder_documents_are_indexed_for_keyword_search_only(

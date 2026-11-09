@@ -1,0 +1,83 @@
+# Golden retrieval questions. One JSON object per line; '#' lines are comments.
+# kind: answerable (expect = acceptable document ids) | restricted (forbid = must never be returned)
+#       | unanswerable (nothing in the knowledge base answers it; the right result is no hits).
+# Personas mirror the Keycloak demo users: employee (staff), security (+security), hr (+hr), finance (+finance).
+# Questions are natural paraphrases on purpose; do not "tune" them to the document wording.
+{"id":"a001","persona":"employee","kind":"answerable","question":"I forgot my login password, how do I get back in?","expect":["IT-PWD-002"]}
+{"id":"a002","persona":"employee","kind":"answerable","question":"How do I set up the second verification step on my phone?","expect":["IT-MFA-001"]}
+{"id":"a003","persona":"employee","kind":"answerable","question":"My old phone is gone and I need to register the new one for logging in securely","expect":["IT-MFA-001"]}
+{"id":"a004","persona":"employee","kind":"answerable","question":"Which wireless network should I join when I am at the office with my laptop?","expect":["IT-WIFI-001"]}
+{"id":"a005","persona":"employee","kind":"answerable","question":"A client is visiting and wants to get online, what do I tell them?","expect":["IT-WIFI-001","FAC-VIS-001"]}
+{"id":"a006","persona":"employee","kind":"answerable","question":"My computer is four years old and painfully slow, can I get a new one?","expect":["IT-LAP-001"]}
+{"id":"a007","persona":"employee","kind":"answerable","question":"I need a program that is not in the company catalogue, who signs off on that?","expect":["IT-SW-001"]}
+{"id":"a008","persona":"employee","kind":"answerable","question":"The printer says there is a jam but I cannot see any stuck sheet","expect":["IT-PRN-001"]}
+{"id":"a009","persona":"employee","kind":"answerable","question":"How do I pick up a document after sending it to the printer?","expect":["IT-PRN-001"]}
+{"id":"a010","persona":"employee","kind":"answerable","question":"How much storage does my inbox have before it fills up?","expect":["IT-MAIL-001"]}
+{"id":"a011","persona":"employee","kind":"answerable","question":"I accidentally deleted a spreadsheet from the team folder last week, can it come back?","expect":["IT-DRV-001"]}
+{"id":"a012","persona":"employee","kind":"answerable","question":"What should I do to work safely from a cafe?","expect":["IT-REM-001"]}
+{"id":"a013","persona":"employee","kind":"answerable","question":"The tunnel to the office network connects but everything crawls","expect":["IT-VPN-002"]}
+{"id":"a014","persona":"employee","kind":"answerable","question":"Am I allowed to record a video call with my team?","expect":["IT-VID-001"]}
+{"id":"a015","persona":"employee","kind":"answerable","question":"I would like my work email on my personal phone, is that allowed?","expect":["IT-MDM-001"]}
+{"id":"a016","persona":"employee","kind":"answerable","question":"Someone stole my backpack with my work laptop inside","expect":["IT-LOST-001"]}
+{"id":"a017","persona":"employee","kind":"answerable","question":"What time does the tech support desk close in the evening?","expect":["IT-HELP-002","GEN-IT-001"]}
+{"id":"a018","persona":"employee","kind":"answerable","question":"How many vacation days do I get each year?","expect":["HR-LEAVE-001"]}
+{"id":"a019","persona":"employee","kind":"answerable","question":"Can I roll over leftover holiday into next year?","expect":["HR-LEAVE-001"]}
+{"id":"a020","persona":"employee","kind":"answerable","question":"My partner and I are expecting a baby, how much time off can we take?","expect":["HR-PARENT-001"]}
+{"id":"a021","persona":"employee","kind":"answerable","question":"Where can I report bad behaviour from a coworker without giving my name?","expect":["HR-CONDUCT-001"]}
+{"id":"a022","persona":"employee","kind":"answerable","question":"What needs to be prepared before a new hire arrives on their first day?","expect":["HR-ONB-001"]}
+{"id":"a023","persona":"employee","kind":"answerable","question":"When are the monthly company-wide meetings held?","expect":["HR-CAL-001"]}
+{"id":"a024","persona":"employee","kind":"answerable","question":"How much can I spend on dinner with a client and still get the money back?","expect":["FIN-EXP-001"]}
+{"id":"a025","persona":"employee","kind":"answerable","question":"How soon after a trip do I have to hand in my receipts?","expect":["FIN-EXP-001"]}
+{"id":"a026","persona":"employee","kind":"answerable","question":"What kind of plane ticket can I book for a short work trip?","expect":["FIN-TRV-001"]}
+{"id":"a027","persona":"employee","kind":"answerable","question":"I lost my company credit card, what now?","expect":["FIN-CARD-001"]}
+{"id":"a028","persona":"employee","kind":"answerable","question":"How do I get a guest into the building for a meeting?","expect":["FAC-VIS-001"]}
+{"id":"a029","persona":"employee","kind":"answerable","question":"What do I do when the fire alarm goes off?","expect":["FAC-EVAC-001"]}
+{"id":"a030","persona":"employee","kind":"answerable","question":"Is there somewhere safe to leave my bike while I work?","expect":["FAC-PARK-001"]}
+{"id":"a031","persona":"employee","kind":"answerable","question":"How do I reserve a conference room for my team?","expect":["FAC-ROOM-001"]}
+{"id":"a032","persona":"employee","kind":"answerable","question":"Can I reserve a desk for tomorrow?","expect":["FAC-DESK-001"]}
+{"id":"a033","persona":"employee","kind":"answerable","question":"I lost my access card for the doors, who do I tell?","expect":["FAC-ACC-001"]}
+{"id":"a034","persona":"employee","kind":"answerable","question":"How can I tell if an email asking for my login details is fake?","expect":["SEC-PHISH-001"]}
+{"id":"a035","persona":"employee","kind":"answerable","question":"What are the different sensitivity labels I should put on documents?","expect":["SEC-DATA-001"]}
+{"id":"a036","persona":"employee","kind":"answerable","question":"What makes a good password according to company rules?","expect":["GEN-PASSWORD-001"]}
+{"id":"a037","persona":"employee","kind":"answerable","question":"How do I connect to the corporate VPN?","expect":["GEN-VPN-001"]}
+{"id":"a038","persona":"employee","kind":"answerable","question":"Who do I contact if I need help with my computer?","expect":["GEN-IT-001","IT-HELP-002"]}
+{"id":"a039","persona":"security","kind":"answerable","question":"A confirmed credential compromise just happened, what are the steps we follow?","expect":["SEC-IR-001"]}
+{"id":"a040","persona":"security","kind":"answerable","question":"How quickly do critical security holes have to be patched?","expect":["SEC-VULN-001"]}
+{"id":"a041","persona":"security","kind":"answerable","question":"Who approves administrator rights and how are those sessions watched?","expect":["SEC-PAM-001"]}
+{"id":"a042","persona":"security","kind":"answerable","question":"What is the process to open a new port on the firewall?","expect":["SEC-FW-001"]}
+{"id":"a043","persona":"security","kind":"answerable","question":"An alert fired on a server, how do I decide whether it is real?","expect":["SEC-SOC-001"]}
+{"id":"a044","persona":"security","kind":"answerable","question":"How often do system owners check who can get into their systems?","expect":["SEC-AR-001"]}
+{"id":"a045","persona":"security","kind":"answerable","question":"What are the ground rules for an authorized hacking exercise against us?","expect":["SEC-PEN-001"]}
+{"id":"a046","persona":"security","kind":"answerable","question":"How are our internal networks divided into zones?","expect":["RES-NETWORK-001"]}
+{"id":"a054","persona":"security","kind":"answerable","question":"What do investigators have to keep safe when looking into a breach?","expect":["RES-SECURITY-001","SEC-IR-001"]}
+{"id":"a047","persona":"hr","kind":"answerable","question":"How are performance ratings compared fairly across teams?","expect":["HR-PERF-001"]}
+{"id":"a048","persona":"hr","kind":"answerable","question":"What pay range do new hires usually start in?","expect":["HR-PAY-001"]}
+{"id":"a049","persona":"hr","kind":"answerable","question":"What are the steps when an employee breaks the rules at work?","expect":["HR-DISC-001"]}
+{"id":"a050","persona":"hr","kind":"answerable","question":"Which questions am I not allowed to ask a candidate in a job interview?","expect":["HR-INT-001"]}
+{"id":"a051","persona":"finance","kind":"answerable","question":"Who has to approve a purchase of fifteen thousand?","expect":["FIN-PROC-001"]}
+{"id":"a052","persona":"finance","kind":"answerable","question":"How do we make sure we only pay supplier bills for things we actually received?","expect":["FIN-INV-001"]}
+{"id":"a053","persona":"finance","kind":"answerable","question":"When does the board sign off on next year's spending plan?","expect":["FIN-BUD-001"]}
+{"id":"r001","persona":"employee","kind":"restricted","question":"What is our incident response playbook for a compromised account?","forbid":["SEC-IR-001"]}
+{"id":"r002","persona":"employee","kind":"restricted","question":"How quickly must critical vulnerabilities be patched?","forbid":["SEC-VULN-001"]}
+{"id":"r003","persona":"employee","kind":"restricted","question":"How are the internal networks segmented?","forbid":["RES-NETWORK-001"]}
+{"id":"r004","persona":"employee","kind":"restricted","question":"What are the salary bands for each role?","forbid":["HR-PAY-001"]}
+{"id":"r005","persona":"employee","kind":"restricted","question":"How are performance ratings calibrated between teams?","forbid":["HR-PERF-001"]}
+{"id":"r006","persona":"employee","kind":"restricted","question":"What approval do I need for a very large purchase?","forbid":["FIN-PROC-001"]}
+{"id":"r007","persona":"hr","kind":"restricted","question":"How do we triage security alerts?","forbid":["SEC-SOC-001"]}
+{"id":"r008","persona":"finance","kind":"restricted","question":"How are salary bands decided?","forbid":["HR-PAY-001"]}
+{"id":"r009","persona":"security","kind":"restricted","question":"What pay range does a new hire start at?","forbid":["HR-PAY-001"]}
+{"id":"r010","persona":"hr","kind":"restricted","question":"What are the rules of engagement for a penetration test?","forbid":["SEC-PEN-001"]}
+{"id":"r011","persona":"employee","kind":"restricted","question":"How does the yearly budgeting process work?","forbid":["FIN-BUD-001"]}
+{"id":"r012","persona":"finance","kind":"restricted","question":"What are the stages of the disciplinary procedure?","forbid":["HR-DISC-001"]}
+{"id":"u001","persona":"employee","kind":"unanswerable","question":"What is the capital of Australia?"}
+{"id":"u002","persona":"employee","kind":"unanswerable","question":"Who won the football match last night?"}
+{"id":"u003","persona":"employee","kind":"unanswerable","question":"Give me a recipe for chocolate cake"}
+{"id":"u004","persona":"employee","kind":"unanswerable","question":"How do I configure a Kubernetes ingress controller?"}
+{"id":"u005","persona":"employee","kind":"unanswerable","question":"Can I bring my dog to work?"}
+{"id":"u006","persona":"employee","kind":"unanswerable","question":"What is the best movie released this year?"}
+{"id":"u007","persona":"employee","kind":"unanswerable","question":"How do I file my personal income tax return?"}
+{"id":"u008","persona":"employee","kind":"unanswerable","question":"Explain how photosynthesis works"}
+{"id":"u009","persona":"employee","kind":"unanswerable","question":"What is the meaning of life?"}
+{"id":"u010","persona":"security","kind":"unanswerable","question":"Translate good morning into Japanese"}
+{"id":"u011","persona":"hr","kind":"unanswerable","question":"Write me a poem about the sea"}
+{"id":"u012","persona":"finance","kind":"unanswerable","question":"What is the current price of Bitcoin?"}

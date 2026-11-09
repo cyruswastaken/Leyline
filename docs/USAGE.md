@@ -57,17 +57,49 @@ Administrators (role `kb_admin`) can upload `.pdf`, `.docx`, `.md` and `.txt` fi
 
 A new version stays invisible until it is fully indexed and then replaces the previous version atomically. Deleting a document makes it unsearchable immediately; its stored files are purged shortly afterwards.
 
-### Embeddings (optional)
+### Semantic search (optional, recommended)
 
-Documents are always indexed for keyword search. To also store embeddings (used by hybrid search in a later phase), point the app at any OpenAI-compatible embeddings endpoint in `.env`:
+Without an embedding model, search is keyword-only. With one, retrieval becomes **hybrid**:
+a keyword leg and a semantic (vector) leg, each permission-filtered inside its own query,
+fused by reciprocal rank and gated by relevance floors. Questions are then matched by meaning
+("someone stole my backpack" finds the *lost or stolen device* policy). On the golden set
+this moves recall@5 from 0.80 to 1.00 and correctly refuses 83% of out-of-scope questions
+(was 25%); see [EVALUATION.md](EVALUATION.md).
 
-```text
-EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1   # e.g. Ollama
-EMBEDDING_MODEL=nomic-embed-text
-# EMBEDDING_API_KEY=...   (not needed for Ollama)
+Any OpenAI-compatible embeddings endpoint works. The recommended local setup uses Ollama:
+
+```powershell
+winget install Ollama.Ollama.Portable      # or install Ollama from ollama.com
+ollama serve                               # starts the local API on port 11434
+ollama pull nomic-embed-text               # about 275 MB, 768-dimension vectors
 ```
 
-Each indexed version records the model that produced its vectors. Changing the model marks documents as **needs re-index** in the admin page; click *Re-index* (the old chunks keep serving until the new ones replace them).
+Then create a git-ignored `.env` next to `compose.yaml` (quotes keep the trailing spaces):
+
+```text
+EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1   # http://localhost:11434/v1 when running on the host
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_QUERY_PREFIX="search_query: "
+EMBEDDING_DOCUMENT_PREFIX="search_document: "
+```
+
+`nomic-embed-text` is trained with those task prefixes; quality drops without them. Restart the
+stack, then index the documents (`docker compose run --rm app python -m leyline.seed` for the
+sample corpus, or **Re-index** in the admin page). `/readyz` reports
+`optional.embeddings_configured: true` when it is on. Each indexed version records the model
+that produced its vectors; changing the model or a prefix marks documents **needs re-index**
+(the old chunks keep serving until the new ones replace them).
+
+The vector size is fixed at 768 in the schema. `text-embedding-3-small` (OpenAI or Azure OpenAI)
+also works: set `EMBEDDING_SEND_DIMENSIONS=true` so the API returns 768 dimensions, and
+re-calibrate the relevance floors (below). If the embedding service is down at question time,
+search falls back to keyword results instead of failing.
+
+**Relevance floors.** `SEARCH_MIN_SIMILARITY` (default 0.58) and `SEARCH_MIN_LEXICAL`
+(default 0.5) decide what counts as relevant at all, which is how out-of-scope questions get
+"I couldn't find relevant information" instead of weakly related text. The defaults are
+calibrated for `nomic-embed-text` with the prefixes above; for another model run
+`python -m leyline.evals --index hybrid --sweep` (see [EVALUATION.md](EVALUATION.md)).
 
 ### Corpus format
 
@@ -140,7 +172,7 @@ Unauthenticated browser navigation is redirected to `/login`; unauthenticated AP
 - Blocked prompt-extraction patterns return HTTP 403 before retrieval.
 - Rate limits return HTTP 429: 10 chat requests per user and 120 requests per client IP, per 60 seconds by default.
 - Invalid input returns HTTP 400: non-JSON bodies, non-string or empty messages, and messages over 2,000 characters.
-- Requests without relevant context return an unavailable response rather than an invented answer.
+- Questions with no sufficiently relevant context (below the relevance floors) return an unavailable response rather than an invented answer.
 - If Redis or the database is unavailable, requests that need them return 503.
 
 ## Tests and checks

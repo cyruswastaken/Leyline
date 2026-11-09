@@ -265,3 +265,45 @@ def test_restricted_titles_never_appear_in_events_seen_by_other_users(
     chat(db_client, "employee", NETWORK_QUESTION)
     for event in events:
         assert "Network Architecture" not in str(event.get("details"))
+
+
+# --- semantic retrieval through the real endpoint -------------------------------------------------
+
+
+def test_chat_finds_a_document_by_meaning_and_logs_the_similarity(
+    db, redis, blobs, llm_calls, events
+):
+    import threading
+
+    from leyline.ingestion.service import IngestionService
+    from leyline.worker import run_worker
+    from tests.support import DEFAULT_CONCEPTS, ConceptEmbedder
+
+    concept = ConceptEmbedder(DEFAULT_CONCEPTS)
+    settings = make_settings(search_min_similarity=0.5, search_min_lexical=0.1)
+    service = IngestionService(db, blobs, concept, settings)
+    service.submit_upload(
+        actor_id="t",
+        filename="d.md",
+        data=b"# Devices\n\nReport a lost or stolen laptop to the helpdesk.",
+        title="Lost devices",
+        groups=["*"],
+    )
+    run_worker(service, db, settings, stop=threading.Event(), once=True)
+    app = create_app(
+        settings, redis_client=redis, database=db, blob_store=blobs, embedder=concept
+    )
+    client = app.test_client()
+    token = login_as(client, PERSONAS["employee"])
+
+    response = client.post(
+        "/chat",
+        json={"message": "somebody took my backpack"},  # shares no word with the doc
+        headers={CSRF_HEADER: token},
+    )
+
+    assert response.status_code == 200
+    assert llm_calls and llm_calls[0]["source"] == "Lost devices"
+    retrieval = next(e for e in events if e["event_type"] == "RETRIEVAL")
+    assert retrieval["details"]["top_similarity"] == pytest.approx(1.0, abs=0.01)
+    assert retrieval["details"]["selected_source"] == "Lost devices"

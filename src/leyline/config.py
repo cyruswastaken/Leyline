@@ -14,6 +14,8 @@ from typing import Literal
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from leyline.constants import EMBEDDING_DIMENSIONS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -80,7 +82,16 @@ class Settings(BaseSettings):
     embedding_base_url: str | None = None
     embedding_api_key: SecretStr | None = None
     embedding_model: str | None = None
-    embedding_dimensions: int | None = Field(default=None, gt=0)
+    # Must equal the schema's fixed vector size (see leyline.constants).
+    embedding_dimensions: int = EMBEDDING_DIMENSIONS
+    # Ask the API to truncate to ``embedding_dimensions`` (OpenAI text-embedding-3
+    # and Azure OpenAI support this; most local models do not).
+    embedding_send_dimensions: bool = False
+    # Asymmetric models need task prefixes, e.g. nomic-embed-text uses
+    # "search_query: " and "search_document: ". Changing a prefix invalidates
+    # stored vectors: re-index every document afterwards.
+    embedding_query_prefix: str = ""
+    embedding_document_prefix: str = ""
     embedding_batch_size: int = Field(default=32, gt=0, le=256)
 
     # --- Ingestion worker -----------------------------------------------------
@@ -96,6 +107,21 @@ class Settings(BaseSettings):
     chunk_overlap_words: int = Field(default=40, ge=0)
 
     search_top_k: int = Field(default=5, gt=0, le=50)
+    # Hybrid retrieval. Each leg (keyword, vector) proposes this many chunks,
+    # which are fused by reciprocal rank (rrf_k damps the head of each list).
+    search_candidates: int = Field(default=40, gt=0, le=200)
+    search_rrf_k: int = Field(default=60, gt=0)
+    # Relevance floors on the underlying signals (fused ranks are relative and
+    # cannot say "nothing relevant"): cosine similarity for the vector leg and
+    # ts_rank_cd for the keyword leg. 0 disables a floor.
+    # Defaults were calibrated for nomic-embed-text (with its task prefixes) on
+    # the golden set: `python -m leyline.evals --index hybrid --sweep`. Another
+    # model has a different similarity scale, so re-run the sweep after
+    # changing it. The lexical floor applies only while the vector leg runs.
+    search_min_similarity: float = Field(default=0.58, ge=-1.0, le=1.0)
+    search_min_lexical: float = Field(default=0.5, ge=0.0)
+    # At most this many chunks of one document in a result list.
+    search_max_chunks_per_document: int = Field(default=2, gt=0)
 
     max_message_length: int = Field(default=2000, gt=0)
     max_request_bytes: int = Field(default=16 * 1024, gt=0)
@@ -129,6 +155,15 @@ class Settings(BaseSettings):
     @property
     def embeddings_configured(self) -> bool:
         return bool(self.embedding_base_url and self.embedding_model)
+
+    @model_validator(mode="after")
+    def _check_embedding_dimensions(self) -> Settings:
+        if self.embedding_dimensions != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"EMBEDDING_DIMENSIONS must be {EMBEDDING_DIMENSIONS}: the database "
+                "schema stores fixed-size vectors (change it with a migration)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_chunking(self) -> Settings:

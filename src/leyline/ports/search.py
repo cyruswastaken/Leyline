@@ -15,7 +15,11 @@ class SearchHit:
     title: str
     heading: str | None
     content: str
+    # Final ordering score. Comparable only within one result list.
     score: float
+    # The underlying signals, when the implementation has them.
+    similarity: float | None = None  # cosine similarity of the vector leg
+    lexical_score: float | None = None  # keyword rank of the full-text leg
 
 
 class SearchIndex(Protocol):
