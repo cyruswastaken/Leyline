@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify, request, render_template
 
 from services.chat_service import process_message
@@ -5,12 +7,15 @@ from services.monitoring import (
     get_security_summary,
     get_recent_events
 )
-from services.document_loader import load_documents
-from services.authorization import filter_authorized_documents
-from services.retrieval import retrieve_documents
+
+
+MAX_MESSAGE_LENGTH = 2000
 
 
 app = Flask(__name__)
+
+# Reject oversized request bodies before they are parsed.
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 
 
 @app.get("/")
@@ -28,24 +33,38 @@ def health_check():
 
 @app.post("/chat")
 def chat():
-    data = request.get_json()
+    data = request.get_json(silent=True)
 
-    if not data or "message" not in data:
+    if not isinstance(data, dict) or "message" not in data:
         return jsonify({
             "error": "Message is required"
         }), 400
 
-    message = data["message"].strip()
+    message = data["message"]
+
+    if not isinstance(message, str):
+        return jsonify({
+            "error": "Message must be a string"
+        }), 400
+
+    message = message.strip()
 
     if not message:
         return jsonify({
             "error": "Message cannot be empty"
         }), 400
 
-    # Temporary identity until authentication is implemented
-    user_id = "local-user"
+    if len(message) > MAX_MESSAGE_LENGTH:
+        return jsonify({
+            "error": (
+                "Message is too long "
+                f"(maximum {MAX_MESSAGE_LENGTH} characters)"
+            )
+        }), 400
 
-    # Temporary role until authentication is implemented
+    # Temporary identity until authentication is implemented (Phase 1).
+    # Identity must never be taken from request input.
+    user_id = "local-user"
     user_role = "employee"
 
     result = process_message(
@@ -65,18 +84,17 @@ def chat():
     }), result["status_code"]
 
 
+# TODO(Phase 1): these routes expose operational data and must be
+# restricted to an authenticated security_auditor before any shared use.
+
 @app.get("/monitoring/summary")
 def monitoring_summary():
-    summary = get_security_summary()
-
-    return jsonify(summary), 200
+    return jsonify(get_security_summary()), 200
 
 
 @app.get("/monitoring/events")
 def monitoring_events():
-    events = get_recent_events()
-
-    return jsonify(events), 200
+    return jsonify(get_recent_events()), 200
 
 
 @app.get("/monitoring")
@@ -84,52 +102,6 @@ def monitoring_dashboard():
     return render_template("monitoring.html")
 
 
-@app.get("/documents")
-def get_documents():
-    documents = load_documents()
-
-    return jsonify(documents), 200
-
-
-@app.get("/documents/<user_role>")
-def get_authorized_documents(user_role):
-    documents = load_documents()
-
-    authorized_documents = filter_authorized_documents(
-        documents,
-        user_role
-    )
-
-    return jsonify(authorized_documents), 200
-
-
-@app.get("/search/<user_role>")
-def search_documents(user_role):
-
-    query = request.args.get(
-        "q",
-        ""
-    ).strip()
-
-    if not query:
-        return jsonify({
-            "error": "Query parameter is required"
-        }), 400
-
-    documents = load_documents()
-
-    authorized_documents = filter_authorized_documents(
-        documents,
-        user_role
-    )
-
-    results = retrieve_documents(
-        query,
-        authorized_documents
-    )
-
-    return jsonify(results), 200
-
-
 if __name__ == "__main__":
-    app.run(debug=True)
+    # The debugger allows remote code execution; opt in explicitly.
+    app.run(debug=os.getenv("FLASK_DEBUG") == "1")

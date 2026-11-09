@@ -26,28 +26,38 @@ def parse_document(file_path: Path) -> dict:
     metadata = {}
     content_lines = []
 
+    header_fields = {
+        "Document Title:": "title",
+        "Document ID:": "id",
+        "Access Level:": "access_level",
+    }
+
+    # Metadata is only honoured in the leading header block. Once body
+    # text begins, a line such as "Access Level: general" is plain
+    # content and can never change the document's classification.
+    in_header = True
+
     for line in lines:
 
-        if line.startswith("Document Title:"):
+        if in_header:
 
-            metadata["title"] = line.replace(
-                "Document Title:",
-                ""
-            ).strip()
+            if not line.strip():
+                continue
 
-        elif line.startswith("Document ID:"):
+            for prefix, key in header_fields.items():
 
-            metadata["id"] = line.replace(
-                "Document ID:",
-                ""
-            ).strip()
+                if line.startswith(prefix):
 
-        elif line.startswith("Access Level:"):
+                    # First occurrence wins.
+                    metadata.setdefault(
+                        key,
+                        line[len(prefix):].strip()
+                    )
+                    break
 
-            metadata["access_level"] = line.replace(
-                "Access Level:",
-                ""
-            ).strip()
+            else:
+                in_header = False
+                content_lines.append(line)
 
         else:
 

@@ -55,10 +55,11 @@ def process_message(
 
         return {
             "allowed": False,
-            "response": (
+            "error": (
                 "Too many requests. "
                 "Please try again later."
             ),
+            "reason": "rate_limit_exceeded",
             "status_code": 429
         }
 
@@ -82,10 +83,11 @@ def process_message(
 
         return {
             "allowed": False,
-            "response": (
+            "error": (
                 "Your request was blocked "
                 "by a security rule."
             ),
+            "reason": "security_rule_triggered",
             "status_code": 403
         }
 

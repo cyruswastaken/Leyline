@@ -7,42 +7,40 @@ from openai import OpenAI
 load_dotenv()
 
 
-AZURE_OPENAI_ENDPOINT = os.getenv(
-    "AZURE_OPENAI_ENDPOINT"
-)
+REQUEST_TIMEOUT_SECONDS = 30
 
-AZURE_OPENAI_API_KEY = os.getenv(
-    "AZURE_OPENAI_API_KEY"
-)
-
-AZURE_OPENAI_DEPLOYMENT = os.getenv(
-    "AZURE_OPENAI_DEPLOYMENT"
-)
+_client = None
 
 
-if not AZURE_OPENAI_ENDPOINT:
-    raise RuntimeError(
-        "AZURE_OPENAI_ENDPOINT is not configured"
-    )
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
 
-if not AZURE_OPENAI_API_KEY:
-    raise RuntimeError(
-        "AZURE_OPENAI_API_KEY is not configured"
-    )
+    if not value:
+        raise RuntimeError(f"{name} is not configured")
 
-if not AZURE_OPENAI_DEPLOYMENT:
-    raise RuntimeError(
-        "AZURE_OPENAI_DEPLOYMENT is not configured"
-    )
+    return value
 
 
-client = OpenAI(
-    base_url=(
-        f"{AZURE_OPENAI_ENDPOINT.rstrip('/')}"
-        "/openai/v1/"
-    ),
-    api_key=AZURE_OPENAI_API_KEY
-)
+def get_client() -> OpenAI:
+    """
+    Build the client on first use so that a missing setting
+    does not stop the app (and /health) from starting.
+    """
+
+    global _client
+
+    if _client is None:
+
+        endpoint = _require_env("AZURE_OPENAI_ENDPOINT")
+
+        _client = OpenAI(
+            base_url=f"{endpoint.rstrip('/')}/openai/v1/",
+            api_key=_require_env("AZURE_OPENAI_API_KEY"),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            max_retries=2
+        )
+
+    return _client
 
 
 def generate_answer(
@@ -99,8 +97,8 @@ Knowledge-base source:
 {source}
 """
 
-    response = client.responses.create(
-        model=AZURE_OPENAI_DEPLOYMENT,
+    response = get_client().responses.create(
+        model=_require_env("AZURE_OPENAI_DEPLOYMENT"),
         instructions=system_prompt,
         input=user_prompt
     )

@@ -901,50 +901,14 @@
                 event.details;
 
 
-            const source =
-                details.selected_source
-                    ? `
-                        <div>
-                            Source:
-                            <span class="source-name">
-                                ${details.selected_source}
-                            </span>
-                        </div>
-                    `
-                    : `
-                        <div>
-                            Source: None
-                        </div>
-                    `;
-
-
-            return `
-                <div class="retrieval-details">
-
-                    ${source}
-
-                    <div>
-                        Score:
-                        ${details.top_score ?? 0}
-                    </div>
-
-                    <div>
-                        Results:
-                        ${details.returned_count ?? 0}
-                    </div>
-
-                    <div>
-                        Candidates:
-                        ${details.candidate_count ?? 0}
-                    </div>
-
-                    <div>
-                        Latency:
-                        ${details.latency_ms ?? 0} ms
-                    </div>
-
-                </div>
-            `;
+            /* Plain text only; the caller uses textContent. */
+            return [
+                "Source: " + (details.selected_source || "None"),
+                "Score: " + (details.top_score ?? 0),
+                "Results: " + (details.returned_count ?? 0),
+                "Candidates: " + (details.candidate_count ?? 0),
+                "Latency: " + (details.latency_ms ?? 0) + " ms"
+            ].join(" | ");
 
         }
 
@@ -1000,33 +964,30 @@
                         );
 
 
-                    row.innerHTML = `
+                    /* Event fields are untrusted: only textContent. */
+                    const cells = [
+                        [event.timestamp, ""],
+                        [event.event_type, eventClass],
+                        [event.user_id, ""],
+                        [event.status_code, ""],
+                        [event.reason, ""],
+                        [formatDetails(event), ""]
+                    ];
 
-                        <td>
-                            ${event.timestamp}
-                        </td>
+                    for (const [text, cssClass] of cells) {
 
-                        <td class="${eventClass}">
-                            ${event.event_type}
-                        </td>
+                        const cell =
+                            document.createElement("td");
 
-                        <td>
-                            ${event.user_id}
-                        </td>
+                        if (cssClass) {
+                            cell.className = cssClass;
+                        }
 
-                        <td>
-                            ${event.status_code}
-                        </td>
+                        cell.textContent = String(text ?? "");
 
-                        <td>
-                            ${event.reason}
-                        </td>
+                        row.appendChild(cell);
 
-                        <td>
-                            ${formatDetails(event)}
-                        </td>
-
-                    `;
+                    }
 
 
                     eventsBody.appendChild(
