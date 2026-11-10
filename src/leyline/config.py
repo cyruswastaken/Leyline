@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str | None = None
     azure_openai_api_key: SecretStr | None = None
     azure_openai_deployment: str | None = None
+    # Turn off for reasoning models (GPT-5 family on Azure OpenAI), which only
+    # accept their default temperature and answer 400 to any other value.
+    llm_send_temperature: bool = True
     llm_timeout_seconds: float = Field(default=30, gt=0)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
     # Consecutive failures before the circuit opens, and how long it stays open.

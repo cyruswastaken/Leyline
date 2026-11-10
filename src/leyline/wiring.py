@@ -65,6 +65,7 @@ def build_chat_model(settings: Settings) -> ChatModel | None:
         model=model,
         timeout_seconds=settings.llm_timeout_seconds,
         max_retries=settings.llm_max_retries,
+        temperature=0.1 if settings.llm_send_temperature else None,
         breaker=CircuitBreaker(
             failure_threshold=settings.llm_breaker_failures,
             reset_seconds=settings.llm_breaker_reset_seconds,

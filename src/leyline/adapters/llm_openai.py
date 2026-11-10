@@ -35,7 +35,9 @@ class OpenAICompatibleChatModel:
         model: str,
         timeout_seconds: float = 30,
         max_retries: int = 2,
-        temperature: float = 0.1,
+        # None leaves the parameter out: reasoning models (the GPT-5 family on
+        # Azure OpenAI) reject any temperature other than their default.
+        temperature: float | None = 0.1,
         breaker: CircuitBreaker | None = None,
     ) -> None:
         self._client = OpenAI(
@@ -46,7 +48,10 @@ class OpenAICompatibleChatModel:
             max_retries=max_retries,
         )
         self._model = model
-        self._temperature = temperature
+        # `omit` makes the SDK leave the field out of the request entirely.
+        self._temperature: float | openai.Omit = (
+            openai.omit if temperature is None else temperature
+        )
         self._breaker = breaker or CircuitBreaker()
 
     @property
@@ -101,8 +106,8 @@ class OpenAICompatibleChatModel:
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=self._messages(system, user),
-                temperature=self._temperature,
                 stream=True,
+                temperature=self._temperature,
             )
             try:
                 for chunk in response:

@@ -219,6 +219,15 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 - **Azure moved to Phase 8.**
 
 ### Phase 8: Azure deployment (about 2 weeks, needs a subscription)
+
+**Status: in progress.** The infrastructure code is written, compiles without warnings and validates against the real subscription (`az deployment sub what-if` and `validate`: 23 resources, no errors). **Nothing has been deployed yet.** Decisions made with the user, and where they differ from the plan below:
+- **Subscription:** Azure for Students (about $100 credit, region policy: centralindia, eastasia, uaenorth, koreacentral, malaysiawest). Everything runs in **Korea Central**, next to the existing Azure OpenAI account `leyline-openai`.
+- **Container Apps instead of App Service** (web, worker and a manual task job from one image); **Postgres + pgvector stays the search index** (it already passes every ACL and retrieval gate; Azure AI Search's paid tiers would use most of the credit, and the `SearchIndex` port keeps it addable later).
+- **Models:** `gpt-5.4-mini` (chat) and `text-embedding-3-small` at 768 dimensions. The embedding change means the relevance floors must be re-swept and `evals/embeddings.json` re-recorded; no floor is lowered to pass.
+- **Redis:** Azure Managed Redis B0 (the classic Azure Cache for Redis is not offered in Korea Central).
+- **Secrets:** all in Key Vault, read by the apps through a managed identity (Key Vault references); the registry is pulled with the same identity. Keys for Postgres, Redis, Blob and Azure OpenAI still exist (as secrets), so "no stored keys" is not fully met: managed-identity access to those services needs adapter changes and is a follow-up.
+- **Disposable by design:** `rg-leyline-app` holds everything that costs money; `infra/teardown.ps1` deletes it, `infra/deploy.ps1` rebuilds it. Always-on cost is roughly $35-45 a month, so the plan is to deploy for demos and tear down.
+- **Still to do:** Entra app registration, groups and roles (free tier, so group claims may need app roles instead); the first real deploy; re-recording embeddings; CI deploy workflow; runbooks.
 - Bicep modules for App Service (container, web + worker on one plan), Postgres, Redis, Key Vault, Blob, AI Search, Azure OpenAI, Log Analytics, Application Insights.
 - Managed identity everywhere, with no stored keys. Entra app registration and group mapping including overage.
 - Azure AI Search adapter that must pass the Phase 3 contract suite and ACL evals.

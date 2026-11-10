@@ -156,6 +156,20 @@ def test_complete_returns_the_text_and_sends_both_prompts(chat_server):
     assert "tools" not in request["body"]  # the model is never given tools
 
 
+def test_temperature_is_sent_by_default_and_can_be_left_out(chat_server):
+    server = chat_server()
+    model_for(server).complete("s", "u")
+    assert server.requests[0]["body"]["temperature"] == 0.1
+
+    quiet = chat_server()
+    model_for(quiet, temperature=None).complete("s", "u")
+    assert "temperature" not in quiet.requests[0]["body"]
+
+    streamed = chat_server(stream_pieces=["a"])
+    list(model_for(streamed, temperature=None).stream("s", "u"))
+    assert "temperature" not in streamed.requests[0]["body"]
+
+
 def test_a_missing_key_still_works_for_local_servers(chat_server):
     server = chat_server()
     OpenAICompatibleChatModel(

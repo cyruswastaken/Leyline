@@ -1,6 +1,36 @@
 # Azure Deployment
 
-The recommended cloud architecture uses Azure App Service, Microsoft Entra ID, Azure Blob Storage, Azure AI Search, Azure OpenAI, and Log Analytics.
+Leyline runs on **Azure Container Apps** with PostgreSQL (pgvector) as the search index, Azure Managed Redis, Blob Storage, Key Vault, Azure OpenAI, Microsoft Entra ID for sign-in and Log Analytics. Everything is Bicep in `infra/`; nothing has been deployed yet.
+
+## Infrastructure as code (`infra/`)
+
+```text
+infra/main.bicep          subscription-scope entry point (creates rg-leyline-app)
+infra/modules/            platform (identity, registry, vault, storage, logs), data (Postgres, Redis),
+                          openai (model deployments), secrets (Key Vault values), apps (environment, web, worker, task job)
+infra/deploy.ps1          two-pass deploy: infrastructure, image, then the apps and migrations
+infra/teardown.ps1        deletes rg-leyline-app and purges the vault; keeps your OpenAI account
+```
+
+Two resource groups: `rg-leyline` (existing; only the two model deployments are added) and
+`rg-leyline-app` (everything that costs money while running). Preview, then deploy:
+
+```powershell
+az login
+./infra/deploy.ps1 -WhatIf          # preview only: creates nothing
+./infra/deploy.ps1                  # pass 1: infrastructure + image (about 10 minutes)
+./infra/deploy.ps1 -OidcClientId <id> -OidcTenantId <tenant> -OidcClientSecret (Read-Host -AsSecureString)
+./infra/teardown.ps1                # when finished (asks you to type the group name)
+```
+
+- **Secrets:** generated or read from the live resources and stored only in Key Vault. The Container Apps read them through a managed identity; the Postgres password is generated per run, written to a temporary file only you can read, and deleted afterwards.
+- **Sign-in redirect:** pass 1 prints the redirect URI (`https://leyline-web.<domain>/auth/callback`) to register in Entra before pass 2.
+- **Demo-tier shortcuts:** Postgres and Redis have public endpoints (TLS plus a password or key; Postgres allows only Azure services). A production deployment would use private networking, Entra authentication to Postgres, and managed-identity access to Blob and OpenAI. The worker has no heartbeat probe (Container Apps cannot run an exec probe); the platform restarts it if the process exits.
+- **Models:** the GPT-5 family accepts only its default temperature, so the template sets `LLM_SEND_TEMPERATURE=false` and a 55 second timeout.
+- **Cost:** about $35-45 a month while running (Postgres B1ms, Managed Redis B0 at $0.019/hour, registry, Container Apps, logs); model calls cost cents for a demo. Estimates, not a price-sheet check. With a student credit, deploy for demos and tear down.
+- **Checked:** the templates compile without warnings (`tests/test_infra.py` compiles them when the Bicep compiler is installed) and pass `az deployment sub what-if` and `validate` on the subscription. A real deploy has not been run.
+
+## Original manual sequence (for reference)
 
 ## Deployment sequence
 
@@ -67,4 +97,4 @@ Azure OpenAI diagnostic logs may contain metadata rather than prompt and respons
 - Remove test users, groups, deployments, and diagnostic workspaces that are no longer needed.
 - Rotate or revoke all lab keys during teardown.
 
-Teardown will be a single scripted command once the infrastructure code exists (Phase 8).
+Teardown is `./infra/teardown.ps1` (deletes `rg-leyline-app`, purges the Key Vault, keeps the Azure OpenAI account; `-IncludeModels` also removes the model deployments). It does not remove the Entra app registration or test users.
