@@ -36,7 +36,7 @@ pycparser==3.12
 pydantic-settings==2.16.2
 pydantic==2.14.3
 pydantic_core==2.50.4
-pypdf==6.21.4
+pypdf==7.0.0
 python-dateutil==4.0.0
 python-dotenv==1.2.4
 redis==8.1.0
