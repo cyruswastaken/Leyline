@@ -49,7 +49,7 @@ Configure diagnostic settings for App Service, Azure AI Search, and Azure OpenAI
 - HTTP 403 and 429 responses
 - Request volume by identity and time window
 - Authentication redirects
-- Repeated blocked-pattern events
+- Repeated `SECURITY_RULE_TRIGGERED`, `INJECTION_SIGNAL` and `PROMPT_LEAK_BLOCKED` events (also queryable in the `security_events` table)
 - Retrieval or model failures
 
 Azure OpenAI diagnostic logs may contain metadata rather than prompt and response content. Do not describe metadata-only logs as full conversation auditing.

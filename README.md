@@ -23,6 +23,8 @@ This is a portfolio project being built to production standards. The included do
 | [Architecture and security](docs/ARCHITECTURE.md) | Request flow, authorization boundary, and known risks |
 | [Azure deployment guide](docs/DEPLOYMENT.md) | Cloud deployment overview, configuration, monitoring, and teardown |
 | [Development guide](docs/DEVELOPMENT.md) | Repository conventions and validation workflow |
+| [Threat model](docs/THREAT_MODEL.md) | STRIDE and OWASP LLM Top 10 analysis, controls and the tests that prove them |
+| [Load test](docs/LOAD_TEST.md) | Latency targets, how to run Locust, measured results |
 | [Retrieval evaluation](docs/EVALUATION.md) | Golden set, metrics, results and the CI quality gate |
 | [Roadmap](docs/ROADMAP.md) | Audit findings, target architecture and phased plan |
 
@@ -66,7 +68,7 @@ This is a portfolio project being built to production standards. The included do
 
 ## Project status
 
-Leyline is under active development and is **not yet safe for real data**. Phases 0 (security fixes, tests, CI, container), 1 (identity and access), 2 (database, document ingestion, per-document ACLs) and 3 (hybrid retrieval and an evaluation gate), 4 (chat experience: conversations, streaming, citations, guardrails) and 5 (ticket escalation) are complete; Phase 6 (hardening and observability) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
+Leyline is under active development and is **not yet safe for real data**. Phases 0 (security fixes, tests, CI, container), 1 (identity and access), 2 (database, document ingestion, per-document ACLs) and 3 (hybrid retrieval and an evaluation gate), 4 (chat experience: conversations, streaming, citations, guardrails) 5 (ticket escalation) and 6 (hardening and observability) are complete; Phase 7 (Azure deployment, needs a subscription) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
 
 ## License
 

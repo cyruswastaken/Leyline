@@ -360,3 +360,27 @@ class TicketEvent(Base):
     )
 
     ticket: Mapped[Ticket] = relationship(back_populates="events")
+
+
+class SecurityEvent(Base):
+    """Every logged security or system event (logins, denials, retrievals, model
+    errors, ticket actions). Append-only: a trigger rejects UPDATE and DELETE,
+    and the application's database role should hold INSERT and SELECT only."""
+
+    __tablename__ = "security_events"
+    __table_args__ = (
+        Index("ix_security_events_ts", "ts"),
+        Index("ix_security_events_type_ts", "event_type", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_type: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[str] = mapped_column(Text)
+    status_code: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )

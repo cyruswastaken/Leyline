@@ -1,14 +1,12 @@
 import hashlib
 import os
 import re
-import tempfile
 from collections.abc import Sequence
 from typing import Any
 
 # A few modules read configuration when imported, so this must be set first.
 # No real model or identity-provider calls are made in tests.
 os.environ["LEYLINE_ENV"] = "test"
-os.environ["LOG_DIR"] = tempfile.mkdtemp(prefix="leyline-test-logs-")
 
 from leyline.auth.principal import AppRole, Principal
 from leyline.config import Settings
@@ -65,7 +63,6 @@ def make_settings(**overrides: object) -> Settings:
         "oidc_metadata_url": "https://idp.invalid/.well-known/openid-configuration",
         "oidc_client_id": "leyline-web",
         "oidc_client_secret": "test-secret",
-        "log_dir": os.environ["LOG_DIR"],
         "rate_limit_ip_requests": 1000,
         # Loose relevance floors: most tests use hash-based fake vectors that
         # carry no meaning, so they exercise keyword behaviour.

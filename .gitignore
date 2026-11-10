@@ -37,3 +37,4 @@ DEVELOPMENT.md
 .vscode/
 .idea/
 logs/
+loadtest/results/

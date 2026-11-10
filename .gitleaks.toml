@@ -1,0 +1,16 @@
+# Extends gitleaks' default rules. The only exceptions are test files whose job
+# is to contain fake credential-shaped strings (redaction and config tests).
+# Real secrets anywhere else, including these files' neighbours, still fail.
+title = "Leyline gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials used as test data"
+paths = [
+  '''tests/test_guardrails\.py''',
+  '''tests/test_config\.py''',
+  '''tests/test_redteam\.py''',
+  '''tests/test_conversations\.py''',
+]

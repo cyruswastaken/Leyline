@@ -111,7 +111,7 @@ def login(client):
 
 _TABLES = (
     "chunks, ingestion_jobs, document_acl, document_versions, documents, audit_events, "
-    "feedback, messages, conversations, ticket_events, tickets"
+    "feedback, messages, conversations, ticket_events, tickets, security_events"
 )
 
 

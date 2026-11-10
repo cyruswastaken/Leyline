@@ -25,6 +25,8 @@ dependencies = [
     "pypdf>=5,<7",
     "redis>=5,<9",
     "requests>=2.32,<3",
+    "opentelemetry-api>=1.27,<2",
+    "opentelemetry-sdk>=1.27,<2",
     "gunicorn>=23; sys_platform != 'win32'",
 ]
 
@@ -78,5 +80,5 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["authlib.*", "fakeredis.*", "pgvector.*", "azure.*"]
+module = ["authlib.*", "fakeredis.*", "pgvector.*", "azure.*", "opentelemetry.exporter.*"]
 ignore_missing_imports = true

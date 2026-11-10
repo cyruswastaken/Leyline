@@ -169,6 +169,24 @@ its requester and to `support_agent`s; for anyone else, an existing ticket and a
 resolve or move a ticket to in progress. The agent role is separate from document groups: being an
 agent grants no document access.
 
+## Events, audit and telemetry
+
+- **Security events** (`services/logger.py`): every event is written to stdout as one JSON line
+  and appended to the `security_events` table (migration `0005`) by a sink registered at startup.
+  A trigger rejects `UPDATE` and `DELETE` on `security_events` and on the admin `audit_events`
+  table; production should also give the application's database role `INSERT` and `SELECT` only.
+  Events hold ids, reasons and counts, never prompts, answers or document text. If the table
+  cannot be written the request continues and an `EVENT_STORE_FAILED` line goes to stdout.
+- **Auditor dashboard:** `/monitoring/summary` and `/monitoring/events` (`?limit=`, `?type=`) are
+  SQL queries over that table, so they work across instances and survive restarts.
+- **OpenTelemetry** (`telemetry.py`, off unless `OTEL_EXPORTER` is `console` or `otlp`): spans for
+  retrieve, rewrite and generate; metrics for turn outcomes (answered, refused, model_error,
+  blocked, rate_limited, cancelled), per-stage duration, time to first token, whole-turn duration,
+  estimated tokens in and out, feedback ratings, and HTTP requests by route template and status
+  class. Token counts are estimates (about four characters per token); cost is not metered.
+- **Threats and tests:** see [THREAT_MODEL.md](THREAT_MODEL.md); load targets and results are in
+  [LOAD_TEST.md](LOAD_TEST.md).
+
 ## Sessions
 
 The browser holds only an opaque random 256-bit id in an `HttpOnly`, `SameSite=Lax` cookie (`__Host-` prefixed and `Secure` when `SESSION_COOKIE_SECURE=true`). The principal and CSRF token live in Redis.
@@ -225,8 +243,8 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the outline and [ROADMAP.md](ROADMAP.md) 
 - **Relevance floors are model-specific.** The shipped floors are calibrated for `nomic-embed-text`; another model needs a re-calibration sweep. Near-topic out-of-scope questions ("can I bring my dog to work?") can still return loosely related documents. Without an embedding model, search is keyword-only and refuses far less.
 - **Parsing runs in the worker process.** Inputs are bounded and validated, but a maliciously crafted PDF could still consume CPU/memory in the worker; the job lease limits the blast radius. Sandboxing parsers is a later hardening step.
 - **Prompt injection.** Signal scoring cannot detect every rephrased attack, and a model can still be talked into a bad answer by retrieved text. The controls that do not depend on the model are what bound the damage: authorization before retrieval, a model with no tools, delimited and neutralised context, verified citations and output redaction. A small local model follows grounding rules less reliably than a large hosted one.
-- **Audit trail.** Administrative actions are audited in Postgres, but security events (logins, denials, retrievals) still go to a local file, and `audit_events` is not yet append-only (Phase 6).
-- Streaming holds a gunicorn thread for the length of an answer (the container runs 2 workers x 4 threads); capacity planning and load targets come in Phase 6.
+- **Audit trail.** Security events and admin audit events are append-only in Postgres (by trigger; production should also restrict the database role). Event storage is synchronous and fails open, so an outage of the table loses events from it (not from stdout).
+- Streaming holds a gunicorn thread for the length of an answer, so concurrency is bounded by threads: the container runs 2 workers x 16 threads (32 concurrent answers). Load targets and measurements are in [LOAD_TEST.md](LOAD_TEST.md); scale out with more containers beyond that.
 - Secrets in environment variables should be replaced with managed identity or Key Vault references in production.
 - The development Keycloak realm uses shared demo passwords over plain HTTP, and Azurite uses Microsoft's published development key; both exist only for local use.
 - The corpus is synthetic and has not been independently security tested.

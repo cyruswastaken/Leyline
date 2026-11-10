@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "feedback",
     "ingestion_jobs",
     "messages",
+    "security_events",
     "ticket_events",
     "tickets",
 }

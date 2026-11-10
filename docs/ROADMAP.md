@@ -193,6 +193,12 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Done when:** the threat model is written, security scans block merges, and load targets are met.
 
+**Phase 6 status: complete, with two deviations and one repository setting for you.** Delivered: append-only `security_events` in Postgres with a SQL-backed auditor dashboard (replacing the log file and `ast.literal_eval`), JSON events on stdout, OpenTelemetry traces and metrics (off by default; console or OTLP), system-prompt leak detection, a written [threat model](THREAT_MODEL.md) mapped to STRIDE and the OWASP LLM Top 10, a red-team suite (`tests/test_redteam.py`) built around a fully compromised model, a security workflow (pip-audit, gitleaks, Trivy image and config, CodeQL, ZAP baseline) plus Dependabot, a hardened single-layer container image that scans clean, and a Locust load test with defined targets ([LOAD_TEST.md](LOAD_TEST.md)). Notes:
+
+- **Scans block merges only once you mark them required** in the repository's branch protection (Settings > Branches); the workflow cannot do that itself. It has never run on GitHub; gitleaks, Trivy and pip-audit were run locally, CodeQL and ZAP were not.
+- **Dashboard shape:** the page is unchanged; the SQL back end serves the same fields. A richer dashboard (time windows, charts) was not built.
+- **Cost** is not metered (tokens are estimates) and the load test measures the app with a fake model, not model capacity.
+
 ### Phase 7: Azure deployment (about 2 weeks, needs a subscription)
 - Bicep modules for App Service (container, web + worker on one plan), Postgres, Redis, Key Vault, Blob, AI Search, Azure OpenAI, Log Analytics, Application Insights.
 - Managed identity everywhere, with no stored keys. Entra app registration and group mapping including overage.

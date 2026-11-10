@@ -1,35 +1,40 @@
+"""Structured security and system events.
+
+``log_security_event`` writes one JSON line to stdout (what container platforms
+collect) and hands the same event to the registered sink, which stores it in the
+append-only ``security_events`` table. A sink that fails never breaks the
+request: the failure is logged and the stdout line remains. Events carry ids,
+reasons and counts, never prompts, answers or document text.
+"""
+
+from __future__ import annotations
+
+import json
 import logging
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from leyline.config import get_settings
-
-LOG_DIR = get_settings().log_dir
-
-# Create logs directory if it doesn't exist
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-# Security log file
-LOG_FILE = LOG_DIR / "security_events.log"
-
+EventSink = Callable[[dict[str, Any]], None]
 
 logger = logging.getLogger("secure_helpdesk")
 logger.setLevel(logging.INFO)
+logger.propagate = False
 
-
-# Prevent duplicate handlers when Flask reloads
+# Prevent duplicate handlers when the module is re-imported.
 if not logger.handlers:
-    # Terminal handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
 
-    # File handler
-    file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+_sink: EventSink | None = None
 
-    file_handler.setFormatter(logging.Formatter("%(message)s"))
 
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
+def set_event_sink(sink: EventSink | None) -> None:
+    """Where events are stored besides stdout (None disables storage)."""
+    global _sink
+    _sink = sink
 
 
 def log_security_event(
@@ -39,20 +44,29 @@ def log_security_event(
     reason: str,
     details: dict[str, Any] | None = None,
 ) -> None:
-    """
-    Log a structured security or system event to both
-    the terminal and persistent security log file.
-    """
-
-    event = {
+    event: dict[str, Any] = {
         "timestamp": datetime.now(UTC).isoformat(),
         "event_type": event_type,
         "user_id": user_id,
         "status_code": status_code,
         "reason": reason,
     }
-
     if details:
         event["details"] = details
 
-    logger.info(event)
+    logger.info(json.dumps(event, default=str))
+
+    sink = _sink
+    if sink is not None:
+        try:
+            sink(event)
+        except Exception:
+            logger.error(
+                json.dumps(
+                    {
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "event_type": "EVENT_STORE_FAILED",
+                        "lost_event_type": event_type,
+                    }
+                )
+            )

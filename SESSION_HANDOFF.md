@@ -1,6 +1,6 @@
 # Session handoff
 
-> **Last updated:** 2026-11-10, after Phase 5. Phases 0-4 are committed (Phase 4 as `32c30e2`). **Phase 5 was handed to the user uncommitted** (they stage and commit); check `git log` / `git status` first to see whether it has landed.
+> **Last updated:** 2026-11-10, after Phase 6. Phases 0-5 are committed (Phase 5 as `6171f77`). **Phase 6 was handed to the user uncommitted** (they stage and commit); check `git log` / `git status` first to see whether it has landed.
 > **Read order for a new session:** this file → `CLAUDE.md` (rules that must not be weakened; git-ignored, so it may be missing on a fresh clone) → the doc for whatever you touch.
 > This file records *state and next steps*. It deliberately does not repeat the detail in
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/USAGE.md`](docs/USAGE.md),
@@ -51,10 +51,13 @@ Browser (server-rendered Jinja + vanilla JS, strict CSP nonces)
 | 1 | OIDC+PKCE login, Redis sessions, roles, CSRF, CSP nonces, Redis rate limiting, Keycloak realm with demo users, route x persona access matrix | committed |
 | 2 | Postgres + Alembic, validated PDF/DOCX/MD/TXT ingestion, chunker, idempotent uploads, atomic re-versioning, job queue + worker, admin UI, per-document group ACLs, audit trail, 49-doc corpus, seed + migration CLIs | committed, pushed |
 | 3 | Golden set (78 questions) + eval harness + CI gate; migration `0002` (`vector(768)` + HNSW); hybrid search with RRF, relevance floors, doc cap; contract suite; record/replay of real embeddings for offline CI; Ollama + nomic-embed-text | committed (`da9d8a2`) |
-| 5 | Tickets: migration `0004`, `TicketProvider` port + Postgres queue, edit-before-send draft built only from the user's own words, ticket page + agent queue, per-user rate limit, credential scrubbing | **built, uncommitted** |
+| 5 | Tickets: migration `0004`, `TicketProvider` port + Postgres queue, edit-before-send draft built only from the user's own words, ticket page + agent queue, per-user rate limit, credential scrubbing | committed (`6171f77`) |
+| 6 | Append-only `security_events` (migration `0005`, SQL dashboard), JSON stdout events, OpenTelemetry (off by default), prompt-leak detection, `docs/THREAT_MODEL.md`, red-team suite, security CI workflow + Dependabot + `.gitleaks.toml`, single-layer hardened image (scans clean), Locust load test + `docs/LOAD_TEST.md`, gunicorn 2x16 threads | **built, uncommitted** |
 | 4 | `ChatModel` port + resilient adapter (timeouts, retries, circuit breaker, 503 degraded mode); migration `0003` (conversations, messages, feedback); SSE streaming with cancel; verified, re-authorized citations; feedback; follow-up rewriting; token budget; guardrails; rebuilt UI; answer-quality eval | committed (`32c30e2`) |
 
 **Phase 3 results** ([`docs/EVALUATION.md`](docs/EVALUATION.md)): recall@5 0.796 -> **1.000**, MRR 0.640 -> **0.936**, recall@1 0.519 -> 0.889, correct refusals 25% -> **83%**, restricted pass 1.000, **0 ACL leaks** (gains confirmed on independent halves of the set).
+
+**Phase 6 verification:** 1105 tests pass (CI mode, 95% coverage), ruff/format/strict mypy clean, `E2E_CHAT=1 E2E_SEMANTIC=1 python scripts/e2e_login.py` passed. Run locally: `pip-audit` (clean), gitleaks over history and working tree (clean after allowlisting fake credentials in tests), Trivy config and image (0 HIGH/CRITICAL after hardening), Locust at 8 and 24 users (targets met with 16 threads per worker; with 4 threads 24 users missed them: head-of-line blocking). **Not run:** the security workflow on GitHub (CodeQL and ZAP never executed), an OTLP exporter against a real collector, anything beyond 24 users, a real model under load.
 
 **Phase 5 verification:** 1065 tests pass (CI mode, 95% coverage), ruff/format/strict mypy clean, `E2E_CHAT=1 E2E_SEMANTIC=1 python scripts/e2e_login.py` passed including the ticket flow (create, privacy, agent queue, assign, comment, resolve, close). Not verified: the tickets page and Contact-support dialog in a browser, mobile layout, screen readers.
 
@@ -74,7 +77,7 @@ Phase detail and acceptance gates live in [`docs/ROADMAP.md`](docs/ROADMAP.md); 
 
 **Phase-bound**
 - **4** done (see Completed work).
-- **5** done (see Completed work).
+- **5, 6** done (see Completed work).
 - **6** OpenTelemetry; append-only audit log; SQL-backed monitoring dashboard; threat model + red-team evals; scanners (pip-audit, gitleaks, Trivy, CodeQL, ZAP); Locust load test.
 - **7** Bicep IaC, managed identity, Entra (incl. group overage via Microsoft Graph), Azure AI Search adapter, deploy pipeline, runbooks/ADRs.
 
@@ -149,26 +152,29 @@ Phase detail and acceptance gates live in [`docs/ROADMAP.md`](docs/ROADMAP.md); 
 3. **Floors are model-specific** (nomic-embed-text + prefixes). Changing the model/prefix requires re-index, a `--sweep`, new env values and updated thresholds; the recorded cache must be re-recorded (needs Ollama). Floors were tuned on the same 78 questions (checked on halves; re-check as the set grows).
 4. **A user's own group/role changes lag** until their session ends (<=12 h default); no back-channel logout. Document-side ACL changes and deletions are immediate.
 5. **Entra group "overage"** is only detected (`groups_incomplete`, fails closed); resolution through Microsoft Graph is not built. → Phase 7.
-6. **Monitoring and security events** are written to a local file (`logs/security_events.log`) and read back with `ast.literal_eval`; single-instance only, newest 10 events shown, the summary ignores newer event types. `audit_events` is separate and not append-only. → Phase 6.
+6. **Security events are stored synchronously and fail open**: if the `security_events` insert fails the request continues and only the stdout line remains (`EVENT_STORE_FAILED`). Append-only is a trigger; production must also give the app's database role INSERT/SELECT only. The dashboard page is unchanged (newest 25 events, counts by type); no time windows or charts.
 7. **Prompt-injection defence is layered but not provable:** signals are scored (only blatant attacks refused), context is delimited and neutralised, the model has no tools, output is redacted and citations verified. A red-team eval suite and threat model are Phase 6.
 8. **Parsers run unsandboxed in the worker** (inputs are bounded; the job lease limits damage).
-9. **Documentation hygiene:** `.gitignore` ignores `CLAUDE.md`, `USAGE.md`, `DEVELOPMENT.md`, `DEPLOYMENT.md` by bare name. The three docs are tracked but `CLAUDE.md` is **untracked, so a fresh clone lacks it**, and any *new* file with those names would be silently ignored. Recommend removing those four lines from `.gitignore` and committing `CLAUDE.md` (user's call).
-10. **CI has never been observed on GitHub** (`gh` is not authenticated here). It now has Postgres/Azurite services and an evaluation step; Python 3.11 compatibility is untested locally.
-11. **The full test suite takes ~6 minutes** (real Postgres seeding); the CI job will be slow until parallelised.
-12. Retrieval quality is CI-gated; **answer quality is measured manually** (needs a chat model; not in CI). The eval cache `evals/embeddings.json` (~880 KB) is a generated file committed on purpose.
-13. Dev-only conveniences (shared demo passwords, plain HTTP Keycloak, Postgres dev password, public Azurite key) are for local use only. `kb_admin` can see titles/ACLs of restricted documents (accepted; never content).
-14. The host-run app on port 5000 is not a registered Keycloak redirect URI (documented workaround). Local Postgres holds scratch databases `leyline_test` / `leyline_scratch_test` (recreated by tests).
+9. **Required checks are your setting:** `.github/workflows/security.yml` only blocks merges if you mark its jobs as required in branch protection. It, `ci.yml` and Dependabot have never been seen running on GitHub.
+10. **Documentation hygiene:** `.gitignore` ignores `CLAUDE.md`, `USAGE.md`, `DEVELOPMENT.md`, `DEPLOYMENT.md` by bare name. The three docs are tracked but `CLAUDE.md` is **untracked, so a fresh clone lacks it**, and any *new* file with those names would be silently ignored. Recommend removing those four lines from `.gitignore` and committing `CLAUDE.md` (user's call).
+11. **CI has never been observed on GitHub** (`gh` is not authenticated here). It now has Postgres/Azurite services and an evaluation step; Python 3.11 compatibility is untested locally.
+12. **The full test suite takes ~6 minutes** (real Postgres seeding); the CI job will be slow until parallelised.
+13. Retrieval quality is CI-gated; **answer quality is measured manually** (needs a chat model; not in CI). The eval cache `evals/embeddings.json` (~880 KB) is a generated file committed on purpose.
+14. Dev-only conveniences (shared demo passwords, plain HTTP Keycloak, Postgres dev password, public Azurite key) are for local use only. `kb_admin` can see titles/ACLs of restricted documents (accepted; never content).
+15. The host-run app on port 5000 is not a registered Keycloak redirect URI (documented workaround). Local Postgres holds scratch databases `leyline_test` / `leyline_scratch_test` (recreated by tests).
 
 ## 9. Next development phases (prioritised)
 
 1. ~~**Phase 4 - chat experience**~~ (done). Original order, for reference: In order: (a) LLM resilience + a configurable chat-model backend (fixes Known issue #1 and unblocks everything else); (b) conversation/message/feedback migration `0003` and persistence; (c) SSE streaming + cancel; (d) structured citations (use `SearchHit.title/heading/chunk_id`) + feedback; (e) guardrails (delimit untrusted context, replace the denylist with scoring/logging, verify citations against retrieved chunks); (f) follow-up query rewriting + token budget; (g) UI rebuild; (h) groundedness/citation evals added to the harness.
-2. ~~Phase 5 - ticket escalation~~ (done). **Phase 6 - hardening/observability (next)**, then **Phase 7 - Azure** (needs a subscription; confirm budget/access with the user first).
+2. ~~Phase 5 - ticket escalation~~ and ~~Phase 6 - hardening/observability~~ (done). **Phase 7 - Azure (next)** (needs a subscription; confirm budget/access with the user first).
 3. **Cross-cutting, every phase:** update `docs/ROADMAP.md` status, keep `docs/ARCHITECTURE.md` accurate, add allowed-path *and* denied-path tests for anything security-relevant, never lower eval floors, keep the production-grade gates in `docs/ROADMAP.md` in view (zero ACL leaks, >=85% coverage, no secrets, scanner-clean, repeatable deploy).
 
 ## 10. Immediate next step
 
-**Start Phase 6: hardening and observability.** Session start checklist: `git log`/`git status` (has Phase 5 landed?) -> start Docker Desktop -> `docker compose up -d postgres azurite` -> activate `.venv` -> `CI=true python -m pytest -q` (expect ~1065 passed, ~7.5 min), `python -m ruff check .`, `python -m mypy`. Start Ollama if needed (models `nomic-embed-text`, `qwen2.5:3b`) and `docker compose up -d --build`.
+**Phase 7 (Azure deployment) needs things only the user can provide, so start by asking.** Before any Bicep: does the user now have an Azure subscription, which region, and what monthly budget ceiling? Without a subscription there is nothing to deploy; the useful local alternatives are (a) review and commit what exists, push, and watch the first real CI and security-workflow runs on GitHub (fix whatever they reveal, and mark the security jobs as required checks), or (b) prepare Phase 7 offline: Bicep modules validated with `az bicep build`/`what-if` where possible, an Azure AI Search `SearchIndex` adapter that must pass `tests/test_search_contract.py` and the eval gate, Entra group-overage handling via Microsoft Graph, and runbooks/ADRs.
 
-Plan (from `docs/ROADMAP.md`): OpenTelemetry traces/metrics (per-stage latency, tokens, no-answer rate, feedback score; JSON logs to stdout, prompts excluded); an append-only audit log in Postgres replacing the local-file security events and `ast.literal_eval` dashboard (role-gated SQL dashboard; today events still go to `logs/security_events.log`); a written threat model (OWASP LLM Top 10 + STRIDE) and a red-team eval suite (injection, exfiltration, cross-user access); CI security scans (pip-audit, gitleaks, Trivy, CodeQL, ZAP baseline) and a Locust load test against defined latency targets (streaming holds a gunicorn thread per answer: 2 workers x 4 threads). Ask the user which scanners they can run on GitHub before wiring CI, and confirm CI has actually run on GitHub (never observed).
+Session start checklist: `git log`/`git status` (has Phase 6 landed?) -> start Docker Desktop (`%LOCALAPPDATA%\Programs\DockerDesktop`) -> `docker compose up -d postgres azurite` -> activate `.venv` -> `CI=true python -m pytest -q` (expect ~1105 passed, ~6 min), `python -m ruff check .`, `python -m mypy`. Start Ollama if needed (`nomic-embed-text`, `qwen2.5:3b`) and `docker compose up -d --build`.
 
-**Done when:** the threat model is written, security scans block merges, and load targets are met.
+Plan (from `docs/ROADMAP.md`): Bicep for App Service (web + worker), Postgres, Redis, Key Vault, Blob, AI Search, Azure OpenAI, Log Analytics, Application Insights; managed identity everywhere; Entra app registration and group mapping including overage; Azure AI Search adapter; GitHub Actions with OIDC federation (build, scan, staging slot, smoke test, swap); budget alerts and one-command spin-up/teardown; runbooks and ADRs; drop the "educational lab" wording only after the production-grade gates pass. Check costs against the Azure pricing calculator first.
+
+**Done when:** a fresh deploy from an empty resource group passes the full verification (Playwright/e2e and eval suites against staging through real Entra login).

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from flask import Flask, g, jsonify, request, session
+import time
+
+from flask import Flask, Response, g, jsonify, request, session
 from flask.typing import ResponseReturnValue
 from redis import Redis
 from redis.exceptions import RedisError
@@ -35,7 +37,9 @@ from leyline.ports.search import SearchIndex
 from leyline.ratelimit import RedisRateLimiter
 from leyline.security_headers import init_security_headers
 from leyline.services.conversations import ConversationService
-from leyline.services.logger import log_security_event
+from leyline.services.logger import log_security_event, set_event_sink
+from leyline.services.monitoring import DatabaseEventSink
+from leyline.telemetry import configure_telemetry, http_request
 from leyline.wiring import (
     build_blob_store,
     build_chat_model,
@@ -62,6 +66,7 @@ def create_app(
     """Build the application. Collaborators default to ones built from
     settings; tests inject their own."""
     settings = settings or get_settings()
+    configure_telemetry(settings)
 
     app = Flask(__name__)
 
@@ -94,6 +99,11 @@ def create_app(
     if search_index is None and database is not None:
         search_index = build_search_index(settings, database, embedder)
     app.extensions[DATABASE_KEY] = database
+    # Events are stored durably when a real database is configured; tests that
+    # pass a stub (or none) turn storage off so apps never share a sink.
+    set_event_sink(
+        DatabaseEventSink(database) if isinstance(database, Database) else None
+    )
     app.extensions[BLOB_KEY] = blob_store
     app.extensions[EMBEDDER_KEY] = embedder
     app.extensions[SEARCH_KEY] = search_index
@@ -170,6 +180,19 @@ def create_app(
             details={"path": request.path},
         )
         return jsonify({"error": "CSRF validation failed"}), 403
+
+    @app.before_request
+    def _start_timer() -> None:
+        g.request_started = time.perf_counter()
+
+    @app.after_request
+    def _record_request(response: Response) -> Response:
+        started = g.get("request_started")
+        if started is not None:
+            # The route template, never the raw path: low cardinality, no ids.
+            route = request.url_rule.rule if request.url_rule else "unmatched"
+            http_request(route, request.method, response.status_code, started)
+        return response
 
     @app.errorhandler(NotConfiguredError)
     def _not_configured(exc: NotConfiguredError) -> ResponseReturnValue:

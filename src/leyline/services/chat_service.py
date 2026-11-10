@@ -6,6 +6,7 @@ from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from typing import Any
 
+from leyline import telemetry
 from leyline.auth.principal import Principal
 from leyline.config import Settings
 from leyline.db.database import Database
@@ -15,13 +16,21 @@ from leyline.ratelimit import RedisRateLimiter
 from leyline.services.authorization import authorize_hits
 from leyline.services.conversations import ConversationService
 from leyline.services.guardrails import (
+    PROMPT_LEAK_REPLY,
     StreamRedactor,
     assess_message,
     build_context,
+    estimate_tokens,
+    leaks_prompt,
     redact,
     verify_citations,
 )
-from leyline.services.llm import generate_answer, rewrite_query, stream_answer
+from leyline.services.llm import (
+    SYSTEM_PROMPT,
+    generate_answer,
+    rewrite_query,
+    stream_answer,
+)
 from leyline.services.logger import log_security_event
 
 NO_ANSWER = "I couldn't find relevant information in the available knowledge base."
@@ -66,6 +75,7 @@ def admit(
             status_code=429,
             reason="rate_limit_exceeded",
         )
+        telemetry.chat_outcome("rate_limited")
         return _rejection(
             "Too many requests. Please try again later.", "rate_limit_exceeded", 429
         )
@@ -81,6 +91,7 @@ def admit(
             details={"score": assessment.score, "blocked": blocked},
         )
         if blocked:
+            telemetry.chat_outcome("blocked")
             return _rejection(
                 "Your request was blocked by a security rule.",
                 "security_rule_triggered",
@@ -100,7 +111,8 @@ def _standalone_query(
     if not history or model is None:
         return message
     try:
-        rewritten = rewrite_query(history, message, model=model)
+        with telemetry.stage("rewrite"):
+            rewritten = rewrite_query(history, message, model=model)
     except ModelUnavailableError as exc:
         log_security_event(
             event_type="MODEL_ERROR",
@@ -132,8 +144,9 @@ def retrieve(
     query = _standalone_query(message, history, model, user_id)
 
     started = time.perf_counter()
-    candidates = search.search(principal, query, limit=settings.search_top_k)
-    hits = authorize_hits(database, principal, candidates)
+    with telemetry.stage("retrieve"):
+        candidates = search.search(principal, query, limit=settings.search_top_k)
+        hits = authorize_hits(database, principal, candidates)
 
     log_security_event(
         event_type="RETRIEVAL",
@@ -184,9 +197,20 @@ def retrieve(
     )
 
 
-def finalize_answer(raw: str, prepared: Prepared) -> tuple[str, list[dict[str, Any]]]:
+def finalize_answer(
+    raw: str, prepared: Prepared, user_id: str = "unknown"
+) -> tuple[str, list[dict[str, Any]]]:
     """Redact credentials, drop citations to sources that were not retrieved,
-    and mark which of the retrieved sources the answer actually cites."""
+    and mark which of the retrieved sources the answer actually cites. An answer
+    that reproduces the system prompt is replaced by a refusal."""
+    if leaks_prompt(raw, SYSTEM_PROMPT):
+        log_security_event(
+            event_type="PROMPT_LEAK_BLOCKED",
+            user_id=user_id,
+            status_code=200,
+            reason="system_prompt_reproduced",
+        )
+        return PROMPT_LEAK_REPLY, [{**c, "cited": False} for c in prepared.citations]
     text, cited = verify_citations(redact(raw), len(prepared.citations))
     citations = [{**c, "cited": c["n"] in cited} for c in prepared.citations]
     return text.strip(), citations
@@ -229,21 +253,30 @@ def process_message(
         history=[],
     )
     if not prepared.hits:
+        telemetry.chat_outcome("refused")
         return {"allowed": True, "response": NO_ANSWER, "status_code": 200}
 
     try:
         if model is None:
             raise ModelUnavailableError("not_configured")
-        raw = generate_answer(
-            query=message, context=prepared.context, source=prepared.source, model=model
-        )
+        with telemetry.stage("generate"):
+            raw = generate_answer(
+                query=message,
+                context=prepared.context,
+                source=prepared.source,
+                model=model,
+            )
+        telemetry.tokens("input", estimate_tokens(prepared.context + message))
+        telemetry.tokens("output", estimate_tokens(raw))
     except ModelUnavailableError as exc:
         # Degraded mode: retrieval worked, the model did not. Say so plainly
         # instead of a generic 500, and never fall back to unvetted text.
         _model_error(user_id, exc.reason)
+        telemetry.chat_outcome("model_error")
         return _rejection(MODEL_UNAVAILABLE, "model_unavailable", 503)
 
-    text, citations = finalize_answer(raw, prepared)
+    text, citations = finalize_answer(raw, prepared, user_id)
+    telemetry.chat_outcome("answered")
     log_security_event(
         event_type="NORMAL_REQUEST",
         user_id=user_id,
@@ -273,7 +306,9 @@ class StreamingTurn:
         message: str,
         model: ChatModel | None,
         conversations: ConversationService,
+        started: float,
     ) -> None:
+        self._started = started
         self._principal = principal
         self._conversation_id = conversation_id
         self._prepared = prepared
@@ -302,6 +337,8 @@ class StreamingTurn:
 
         if not prepared.hits:
             message_id = self._save(NO_ANSWER, "complete", [])
+            telemetry.chat_outcome("refused")
+            telemetry.turn_finished(self._started, "refused")
             yield {"type": "delta", "text": NO_ANSWER}
             yield {
                 "type": "done",
@@ -315,6 +352,9 @@ class StreamingTurn:
         raw: list[str] = []
         shown: list[str] = []
         stream: Iterator[str] | None = None
+        generating = telemetry.start_span("chat.generate")
+        generate_started = time.perf_counter()
+        first = True
         try:
             if self._model is None:
                 raise ModelUnavailableError("not_configured")
@@ -325,14 +365,21 @@ class StreamingTurn:
                 raw.append(piece)
                 safe = redactor.feed(piece)
                 if safe:
+                    if first:
+                        telemetry.first_token(self._started)
+                        first = False
                     shown.append(safe)
                     yield {"type": "delta", "text": safe}
             tail = redactor.flush()
             if tail:
+                if first:
+                    telemetry.first_token(self._started)
                 shown.append(tail)
                 yield {"type": "delta", "text": tail}
         except ModelUnavailableError as exc:
             _model_error(user_id, exc.reason)
+            telemetry.chat_outcome("model_error")
+            telemetry.turn_finished(self._started, "model_error")
             partial = "".join(shown).strip()
             self._save(partial or MODEL_UNAVAILABLE, "error", [])
             yield {
@@ -347,6 +394,8 @@ class StreamingTurn:
             partial = ("".join(shown) + tail).strip()
             if partial:
                 self._save(partial, "cancelled", [])
+            telemetry.chat_outcome("cancelled")
+            telemetry.turn_finished(self._started, "cancelled")
             log_security_event(
                 event_type="CHAT_CANCELLED",
                 user_id=user_id,
@@ -358,9 +407,15 @@ class StreamingTurn:
             close = getattr(stream, "close", None)
             if close is not None:
                 close()
+            telemetry.stage_duration("generate", generate_started)
+            generating.end()
 
-        text, citations = finalize_answer("".join(raw), prepared)
+        text, citations = finalize_answer("".join(raw), prepared, user_id)
         message_id = self._save(text, "complete", citations)
+        telemetry.tokens("input", estimate_tokens(prepared.context + self._message))
+        telemetry.tokens("output", estimate_tokens("".join(raw)))
+        telemetry.chat_outcome("answered")
+        telemetry.turn_finished(self._started, "answered")
         log_security_event(
             event_type="NORMAL_REQUEST",
             user_id=user_id,
@@ -389,6 +444,7 @@ def begin_turn(
 ) -> StreamingTurn | dict[str, Any]:
     """Admit, authorize and persist the question; returns a stream to run, or a
     rejection dict (rate limit, blocked, unknown conversation) with its status."""
+    started = time.perf_counter()
     rejected = admit(message, principal, rate_limiter=rate_limiter, settings=settings)
     if rejected:
         return rejected
@@ -422,4 +478,5 @@ def begin_turn(
         message=message,
         model=model,
         conversations=conversations,
+        started=started,
     )

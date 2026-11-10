@@ -165,6 +165,35 @@ def verify_citations(answer: str, source_count: int) -> tuple[str, list[int]]:
     return cleaned, sorted(cited)
 
 
+# --- system prompt leakage ----------------------------------------------------------
+
+LEAK_WINDOW = 8  # consecutive words copied from the prompt that count as a leak
+PROMPT_LEAK_REPLY = (
+    "I can't share my instructions, but I'm happy to help with an IT question."
+)
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def _shingles(prompt: str) -> frozenset[tuple[str, ...]]:
+    words = _words(prompt)
+    return frozenset(
+        tuple(words[i : i + LEAK_WINDOW]) for i in range(len(words) - LEAK_WINDOW + 1)
+    )
+
+
+def leaks_prompt(answer: str, prompt: str) -> bool:
+    """Does the answer reproduce a run of the system prompt word for word?"""
+    shingles = _shingles(prompt)
+    words = _words(answer)
+    return any(
+        tuple(words[i : i + LEAK_WINDOW]) in shingles
+        for i in range(len(words) - LEAK_WINDOW + 1)
+    )
+
+
 # --- output redaction ---------------------------------------------------------
 
 REDACTED = "[redacted]"

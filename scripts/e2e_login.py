@@ -115,9 +115,16 @@ class Stack:
 
     def post(self, username: str, path: str, **kwargs) -> requests.Response:
         headers = {"X-CSRF-Token": self.csrf[username]}
-        return self.sessions[username].post(
-            f"{APP}{path}", headers=headers, timeout=240, **kwargs
-        )
+        # Chat is limited per user (10 questions a minute by default). A fast
+        # model can outrun that, so wait out the window instead of failing.
+        for attempt in range(8):
+            response = self.sessions[username].post(
+                f"{APP}{path}", headers=headers, timeout=240, **kwargs
+            )
+            if response.status_code != 429 or attempt == 7:
+                return response
+            time.sleep(10)
+        return response
 
     def retrieved(self, username: str, question: str) -> str | None:
         """What this user's question retrieved first, read from the audit trail.

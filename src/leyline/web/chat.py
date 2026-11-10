@@ -15,6 +15,7 @@ from flask import (
 )
 from flask.typing import ResponseReturnValue
 
+from leyline import telemetry
 from leyline.auth.access import (
     current_principal,
     login_required,
@@ -231,4 +232,5 @@ def message_feedback(message_id: uuid.UUID) -> ResponseReturnValue:
         principal.user_id, message_id, rating=rating, reason=reason
     ):
         return jsonify({"error": "Message not found"}), 404
+    telemetry.feedback(rating)
     return jsonify({"ok": True})

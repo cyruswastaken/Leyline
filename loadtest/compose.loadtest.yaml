@@ -1,0 +1,13 @@
+# Overrides for load testing only. Usage:
+#   python loadtest/fake_llm.py &
+#   docker compose -f compose.yaml -f loadtest/compose.loadtest.yaml up -d app
+# Rate limits are raised so the test measures capacity, not the limiter;
+# never use this file outside a load test.
+services:
+  app:
+    environment:
+      LLM_BASE_URL: http://host.docker.internal:9099/v1
+      LLM_MODEL: fake
+      RATE_LIMIT_REQUESTS: "1000000"
+      RATE_LIMIT_IP_REQUESTS: "1000000"
+      TICKET_RATE_LIMIT: "1000000"

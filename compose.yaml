@@ -46,8 +46,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - app-logs:/var/log/leyline
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
@@ -183,6 +181,5 @@ services:
       - "127.0.0.1:4317:4317"
 
 volumes:
-  app-logs:
   pg-data:
   azurite-data:

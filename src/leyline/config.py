@@ -49,7 +49,6 @@ class Settings(BaseSettings):
     llm_breaker_reset_seconds: float = Field(default=30, gt=0)
 
     corpus_dir: Path = REPO_ROOT / "corpus"
-    log_dir: Path = REPO_ROOT / "logs"
 
     # --- Identity (OpenID Connect) ---------------------------------------
     # Keycloak locally, Microsoft Entra ID on Azure: both are standard OIDC.
@@ -141,6 +140,13 @@ class Settings(BaseSettings):
     conversation_retention_days: int = Field(default=0, ge=0)
     # A message scoring at least this on injection signals is refused (403).
     injection_block_score: int = Field(default=4, gt=0)
+
+    # --- Telemetry (OpenTelemetry) --------------------------------------------
+    # "none" is a no-op; "console" prints spans/metrics; "otlp" ships them to a
+    # collector (needs: pip install opentelemetry-exporter-otlp-proto-http).
+    otel_exporter: Literal["none", "console", "otlp"] = "none"
+    otel_service_name: str = "leyline"
+    otel_otlp_endpoint: str | None = None
 
     # --- Tickets ---------------------------------------------------------------
     ticket_max_subject: int = Field(default=150, gt=0)
