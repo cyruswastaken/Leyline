@@ -52,7 +52,7 @@ jobs:
       - name: Build the image
         run: docker build -t leyline-app:scan .
       - name: Scan for HIGH and CRITICAL vulnerabilities with a fix available
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: leyline-app:scan
           severity: HIGH,CRITICAL
@@ -60,7 +60,7 @@ jobs:
           exit-code: "1"
           vuln-type: os,library
       - name: Scan the repository for misconfiguration (Dockerfile, compose)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: .
