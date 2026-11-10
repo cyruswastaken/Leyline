@@ -59,6 +59,38 @@ knife edge (similarity 0.55-0.60 and lexical 0.4-0.6 behave alike) with a cliff 
 similarity 0.65, so the shipped 0.58 / 0.5 leaves margin. Re-check this as the corpus and
 golden set grow.
 
+## Answer quality (manual gate)
+
+`python -m leyline.evals.answers [--verbose] [--json out.json]` runs every golden question through
+the real pipeline (retrieval, re-authorization, delimited prompt, the configured chat model,
+citation verification) and scores the **answers**. It needs a chat model, so unlike the retrieval
+gate it is run by hand and its results are recorded here. There is no model-as-judge: each metric
+is computed from the sources shown to the model and the corpus ACLs.
+
+| Metric | Meaning |
+| --- | --- |
+| answered | answerable questions that got an answer instead of a refusal |
+| cites a source | answers with at least one valid `[n]` citation |
+| cites an expected document | a cited source is one the golden case expects |
+| figures supported | every number in the answer appears in the sources (cheap check against invented figures) |
+| refused | unanswerable questions that were refused |
+| restricted pass | restricted questions where no forbidden document was shown, cited or named |
+| ACL leaks | sources shown to the model that the asker may not read (must be 0) |
+
+Result with `qwen2.5:3b` (Ollama, RTX 3050 4 GB), hybrid retrieval, 78 questions, 2026-11-10:
+
+| answered | cites a source | cites expected doc | figures supported | refused | restricted pass | ACL leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.926 | 0.833 | 0.778 | 0.981 | 1.000 | 0.917 | 0 |
+
+How to read it: permission safety held (no leaks, every unanswerable question refused). The misses
+are the small model's: about one answer in six omits citations, and it sometimes refuses
+or hedges when the sources do contain the answer (a007, a009, a025, a049). The one restricted miss
+(r012) is a refusal that names the topic "Disciplinary Procedure", which the title-match metric counts;
+the forbidden text was never shown to the model. A larger model (OpenAI, Azure OpenAI) is expected
+to improve citation behaviour; re-run this after changing the model, the prompt or the context
+format, and record the numbers. Retrieval and ACL safety stay CI-gated.
+
 ## Running it
 
 ```powershell

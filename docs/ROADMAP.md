@@ -166,6 +166,12 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Done when:** a multi-turn cited conversation streams end to end, and LLM failures degrade cleanly.
 
+**Phase 4 status: complete.** Delivered: a `ChatModel` port with an OpenAI-compatible adapter (Ollama, OpenAI, Azure), timeouts, bounded retries and a circuit breaker with a 503 degraded mode; migration `0003` (conversations, messages, feedback) with owner-scoped, retention-aware storage; SSE streaming with cancel; structured, verified, re-authorized citations; thumbs up/down with a reason; follow-up rewriting from the user's own questions; context token budgeting; guardrails (scored injection signals, delimited untrusted context, citation verification, rolling-buffer credential redaction); a rebuilt vanilla-JS UI (sidebar, streaming, safe Markdown, keyboard and screen-reader support, mobile layout); and an answer-quality evaluation (`python -m leyline.evals.answers`). Differences from the plan:
+
+- **Answer quality is gated manually, not in CI.** It needs a chat model, so `leyline.evals.answers` records results in [EVALUATION.md](EVALUATION.md) instead of failing the build; retrieval and ACL safety remain CI-gated.
+- **The 403 denylist was replaced by scoring**, but blatant attacks (an override plus a request for the system prompt) are still refused.
+- **`/chat` (stateless JSON) is kept** next to the streaming API for scripts and tests.
+
 ### Phase 5: Ticket escalation (about 1 week)
 - "Escalate" action with a pre-filled summary the user reviews before sending.
 - `TicketProvider` port and built-in queue; agent view with status, assignment and comments.

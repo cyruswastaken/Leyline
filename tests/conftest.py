@@ -68,7 +68,7 @@ def llm_calls(monkeypatch):
     """Replace the model call and record the context it would receive."""
     calls = []
 
-    def fake_generate_answer(query, context, source):
+    def fake_generate_answer(query, context, source, **_):
         calls.append({"query": query, "context": context, "source": source})
         return "stub answer"
 
@@ -109,7 +109,8 @@ def login(client):
 # --------------------------------------------------------------------------
 
 _TABLES = (
-    "chunks, ingestion_jobs, document_acl, document_versions, documents, audit_events"
+    "chunks, ingestion_jobs, document_acl, document_versions, documents, audit_events, "
+    "feedback, messages, conversations"
 )
 
 

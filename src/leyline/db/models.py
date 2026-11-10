@@ -22,6 +22,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -41,6 +42,8 @@ EVERYONE_GROUP = "*"
 VERSION_STATUSES = ("pending", "processing", "indexed", "failed", "superseded")
 JOB_KINDS = ("ingest", "purge")
 JOB_STATES = ("queued", "running", "succeeded", "failed")
+MESSAGE_ROLES = ("user", "assistant")
+MESSAGE_STATUSES = ("complete", "error", "cancelled")
 
 TSV_EXPRESSION = (
     "to_tsvector('english'::regconfig, coalesce(heading, '') || ' ' || content)"
@@ -226,4 +229,76 @@ class AuditEvent(Base):
     target_id: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb")
+    )
+
+
+class Conversation(Base):
+    """A chat thread. Owner-scoped: every query filters on ``owner_id``, which
+    always comes from the authenticated principal."""
+
+    __tablename__ = "conversations"
+    __table_args__ = (
+        Index("ix_conversations_owner_updated", "owner_id", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    messages: Mapped[list[Message]] = relationship(
+        back_populates="conversation", order_by="Message.seq", cascade="all, delete"
+    )
+
+
+class Message(Base):
+    __tablename__ = "messages"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "seq", name="uq_messages_sequence"),
+        CheckConstraint(_in("role", MESSAGE_ROLES), name="ck_messages_role"),
+        CheckConstraint(_in("status", MESSAGE_STATUSES), name="ck_messages_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE")
+    )
+    seq: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="complete")
+    # [{"document_id", "title", "heading", "chunk_id", "n"}]: a snapshot of what
+    # the answer was based on. Readability is re-checked every time it is shown.
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", name="uq_feedback_message_user"),
+        CheckConstraint("rating IN (-1, 1)", name="ck_feedback_rating"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[str] = mapped_column(Text)
+    rating: Mapped[int] = mapped_column(SmallInteger)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )

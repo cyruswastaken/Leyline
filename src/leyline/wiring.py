@@ -10,12 +10,15 @@ from __future__ import annotations
 import logging
 
 from leyline.adapters.blob_azure import AzureBlobStore
+from leyline.adapters.circuit_breaker import CircuitBreaker
 from leyline.adapters.embeddings_openai import OpenAICompatibleEmbedder
+from leyline.adapters.llm_openai import OpenAICompatibleChatModel
 from leyline.adapters.search_postgres import PostgresSearchIndex, SearchOptions
 from leyline.config import Settings
 from leyline.db.database import Database
 from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
+from leyline.ports.llm import ChatModel
 from leyline.ports.search import SearchIndex
 
 
@@ -48,6 +51,24 @@ def build_search_index(
     """Hybrid when an embedder is configured, keyword-only otherwise."""
     return PostgresSearchIndex(
         database, embedder, SearchOptions.from_settings(settings)
+    )
+
+
+def build_chat_model(settings: Settings) -> ChatModel | None:
+    endpoint = settings.llm_endpoint
+    if endpoint is None:
+        return None
+    base_url, api_key, model = endpoint
+    return OpenAICompatibleChatModel(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        timeout_seconds=settings.llm_timeout_seconds,
+        max_retries=settings.llm_max_retries,
+        breaker=CircuitBreaker(
+            failure_threshold=settings.llm_breaker_failures,
+            reset_seconds=settings.llm_breaker_reset_seconds,
+        ),
     )
 
 

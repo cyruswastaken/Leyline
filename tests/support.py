@@ -202,3 +202,57 @@ DEFAULT_CONCEPTS: dict[str, set[str]] = {
     "network": {"wifi", "wireless", "network", "internet"},
     "printing": {"printer", "print", "jam", "toner"},
 }
+
+
+class FakeChatModel:
+    """A scripted chat model that records every prompt it is given.
+
+    ``complete`` serves query rewriting (and the blocking endpoint); ``stream``
+    serves conversation turns. Failures can be injected before or part-way
+    through a stream.
+    """
+
+    model = "fake-chat"
+
+    def __init__(
+        self,
+        *,
+        pieces: Sequence[str] = ("Use the self-service portal ", "[1]."),
+        answer: str = "Use the self-service portal [1].",
+        rewrite: str | None = None,
+        fail_stream_after: int | None = None,
+        fail_complete: bool = False,
+    ) -> None:
+        self.pieces = list(pieces)
+        self.answer = answer
+        self.rewrite = rewrite
+        self.fail_stream_after = fail_stream_after
+        self.fail_complete = fail_complete
+        self.stream_calls: list[tuple[str, str]] = []
+        self.complete_calls: list[tuple[str, str]] = []
+        self.stream_closed = False
+
+    def complete(self, system: str, user: str) -> str:
+        from leyline.ports.llm import ModelUnavailableError
+
+        self.complete_calls.append((system, user))
+        if self.fail_complete:
+            raise ModelUnavailableError("http_500")
+        if self.rewrite is not None and "standalone search query" in system:
+            return self.rewrite
+        return self.answer
+
+    def stream(self, system: str, user: str) -> Any:
+        from leyline.ports.llm import ModelUnavailableError
+
+        self.stream_calls.append((system, user))
+        try:
+            for index, piece in enumerate(self.pieces):
+                if (
+                    self.fail_stream_after is not None
+                    and index >= self.fail_stream_after
+                ):
+                    raise ModelUnavailableError("connection_error")
+                yield piece
+        finally:
+            self.stream_closed = True

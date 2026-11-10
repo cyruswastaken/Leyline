@@ -25,6 +25,20 @@ POLICY = {
     ("GET", "/"): (USER, "/"),
     ("GET", "/me"): (USER, "/me"),
     ("POST", "/chat"): (USER, "/chat"),
+    ("POST", "/api/chat/stream"): (USER, "/api/chat/stream"),
+    ("GET", "/api/conversations"): (USER, "/api/conversations"),
+    ("GET", "/api/conversations/<uuid:conversation_id>"): (
+        USER,
+        f"/api/conversations/{SOME_ID}",
+    ),
+    ("DELETE", "/api/conversations/<uuid:conversation_id>"): (
+        USER,
+        f"/api/conversations/{SOME_ID}",
+    ),
+    ("POST", "/api/messages/<uuid:message_id>/feedback"): (
+        USER,
+        f"/api/messages/{SOME_ID}/feedback",
+    ),
     ("POST", "/logout"): (USER, "/logout"),
     ("GET", "/monitoring"): (AUDITOR, "/monitoring"),
     ("GET", "/monitoring/summary"): (AUDITOR, "/monitoring/summary"),
@@ -72,8 +86,10 @@ def call(client, method, path, token):
     kwargs = {}
     if method in {"POST", "PUT", "DELETE"}:
         headers[CSRF_HEADER] = token
-    if path == "/chat":
+    if path in ("/chat", "/api/chat/stream"):
         kwargs["json"] = {"message": "How do I set up the VPN?"}
+    if path.endswith("/feedback"):
+        kwargs["json"] = {"rating": 1}
     if method == "PUT":
         kwargs["json"] = {"groups": ["staff"]}
     return client.open(path, method=method, headers=headers, **kwargs)
@@ -109,8 +125,12 @@ def test_access_matrix(db_app, persona, method, rule):
         # Allowed through the access check. Admin routes may still answer 400
         # or 404 (no file / unknown id): that is the handler, not a denial.
         assert response.status_code not in (401, 403), response.get_data(as_text=True)
-        if (kind in (USER, AUDITOR) and method == "GET") or path in (
+        if path.startswith("/api/conversations/") or path.endswith("/feedback"):
+            # An id nobody owns: the handler answers 404, which is not a denial.
+            assert response.status_code == 404
+        elif (kind in (USER, AUDITOR) and method == "GET") or path in (
             "/chat",
+            "/api/chat/stream",
             "/logout",
         ):
             assert response.status_code == 200

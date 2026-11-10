@@ -231,7 +231,10 @@ def test_the_model_receives_titles_headings_and_text(db_client, add_doc, llm_cal
     )
     chat(db_client, "employee", "How do I clear jammedpaper?")
     [call] = llm_calls
-    assert "Source: Printer guide (Printers > Jams)" in call["context"]
+    assert (
+        '<source id="1" title="Printer guide" heading="Printers > Jams">'
+        in call["context"]
+    )
     assert "jammedpaper" in call["context"]
     assert call["source"] == "Printer guide"
     assert call["query"] == "How do I clear jammedpaper?"

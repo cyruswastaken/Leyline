@@ -101,6 +101,28 @@ search falls back to keyword results instead of failing.
 calibrated for `nomic-embed-text` with the prefixes above; for another model run
 `python -m leyline.evals --index hybrid --sweep` (see [EVALUATION.md](EVALUATION.md)).
 
+### Chat model (needed for answers)
+
+`/chat` retrieves and authorizes sources first, then asks a chat model to answer from them. Any
+OpenAI-compatible endpoint works. The local setup reuses Ollama:
+
+```powershell
+ollama pull qwen2.5:3b                     # about 2 GB; fits a 4 GB GPU
+```
+
+```text
+LLM_BASE_URL=http://host.docker.internal:11434/v1   # http://localhost:11434/v1 when running on the host
+LLM_MODEL=qwen2.5:3b
+```
+
+For OpenAI set `LLM_BASE_URL=https://api.openai.com/v1`, `LLM_MODEL` and `LLM_API_KEY`. The legacy
+`AZURE_OPENAI_*` trio is used when `LLM_BASE_URL` is unset. Calls have a timeout
+(`LLM_TIMEOUT_SECONDS`), bounded retries (`LLM_MAX_RETRIES`) and a circuit breaker
+(`LLM_BREAKER_FAILURES` consecutive failures open it for `LLM_BREAKER_RESET_SECONDS`). When the
+model is down, not configured, or the circuit is open, `/chat` answers **503** with "The assistant
+is temporarily unavailable" (`reason: model_unavailable`) and logs a `MODEL_ERROR` event; search and
+the admin pages keep working. Questions with no readable source are refused without calling the model.
+
 ### Corpus format
 
 Corpus files start with a header block, then the body:
@@ -154,7 +176,11 @@ python -m leyline.app            # the web app
 | `POST` | `/logout` | signed in + CSRF | End the session and the identity provider's session |
 | `GET` | `/me` | signed in | Current user, roles, groups and CSRF token |
 | `GET` | `/` | signed in | Chat interface |
-| `POST` | `/chat` | signed in + CSRF | Ask a question |
+| `POST` | `/chat` | signed in + CSRF | Ask one stateless question; JSON answer with `citations` |
+| `POST` | `/api/chat/stream` | signed in + CSRF | One conversation turn as server-sent events (`meta`, `delta`, `done` or `error`); body `{message, conversation_id?}` |
+| `GET` | `/api/conversations` | signed in | Your conversations, newest first |
+| `GET`, `DELETE` | `/api/conversations/<id>` | signed in (+ CSRF) | Messages with citations re-checked against current permissions; delete |
+| `POST` | `/api/messages/<id>/feedback` | signed in + CSRF | Thumbs up/down (`{rating: 1 \| -1, reason?}`) on one of your answers |
 | `GET` | `/monitoring`, `/monitoring/summary`, `/monitoring/events` | `security_auditor` | Security dashboard and events |
 | `GET` | `/admin/documents` | `kb_admin` | Knowledge-base admin page |
 | `GET`, `POST` | `/api/admin/documents` | `kb_admin` (+ CSRF) | List documents; upload a new one (multipart: `file`, `title`, `groups`) |
@@ -169,7 +195,12 @@ Unauthenticated browser navigation is redirected to `/login`; unauthenticated AP
 
 - Identity comes only from the signed-in session; nothing in the request can change who you are.
 - Search only ever considers documents the user may read, and every hit is checked against the database again before it is given to the model.
-- Blocked prompt-extraction patterns return HTTP 403 before retrieval.
+- Prompt-injection signals in a question are scored and logged (`INJECTION_SIGNAL`); only an unmistakable attack (for example an override combined with a request for the system prompt) is refused with HTTP 403 before retrieval.
+- Conversations belong to their owner: another user's conversation or message answers 404, exactly like one that does not exist. `CONVERSATION_RETENTION_DAYS` (default 0 = keep) deletes conversations idle for longer.
+- Answers cite sources as `[1]`, `[2]`; markers pointing at a source that was not retrieved are removed, and a source you can no longer read shows as "Source no longer available" in old conversations.
+- Follow-up questions are rewritten into a standalone search from **your own earlier questions only**; assistant replies are never fed back to the model, because they may quote documents you can no longer read.
+- Credential-shaped strings (keys, tokens, `password: ...`) are redacted from answers, including when split across stream chunks.
+- If you close the page or press **Stop**, generation is cancelled and the part already written is kept, marked as stopped.
 - Rate limits return HTTP 429: 10 chat requests per user and 120 requests per client IP, per 60 seconds by default.
 - Invalid input returns HTTP 400: non-JSON bodies, non-string or empty messages, and messages over 2,000 characters.
 - Questions with no sufficiently relevant context (below the relevance floors) return an unavailable response rather than an invented answer.

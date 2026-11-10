@@ -12,8 +12,10 @@ from leyline.db.database import Database
 from leyline.ingestion.service import IngestionService
 from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
+from leyline.ports.llm import ChatModel
 from leyline.ports.search import SearchIndex
 from leyline.ratelimit import RedisRateLimiter
+from leyline.services.conversations import ConversationService
 
 SETTINGS_KEY = "leyline.settings"
 REDIS_KEY = "leyline.redis"
@@ -23,6 +25,8 @@ BLOB_KEY = "leyline.blob_store"
 EMBEDDER_KEY = "leyline.embedder"
 SEARCH_KEY = "leyline.search_index"
 INGESTION_KEY = "leyline.ingestion"
+CHAT_MODEL_KEY = "leyline.chat_model"
+CONVERSATIONS_KEY = "leyline.conversations"
 
 
 class NotConfiguredError(RuntimeError):
@@ -62,6 +66,15 @@ def search_index() -> SearchIndex:
 
 def ingestion_service() -> IngestionService:
     return cast(IngestionService, _get(INGESTION_KEY, "document ingestion"))
+
+
+def conversation_service() -> ConversationService:
+    return cast(ConversationService, _get(CONVERSATIONS_KEY, "conversations"))
+
+
+def chat_model() -> ChatModel | None:
+    """None when no chat model is configured (answers degrade, search works)."""
+    return cast("ChatModel | None", current_app.extensions.get(CHAT_MODEL_KEY))
 
 
 def embedder() -> Embedder | None:

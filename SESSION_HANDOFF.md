@@ -1,6 +1,6 @@
 # Session handoff
 
-> **Last updated:** 2026-11-09, after Phase 3. Phases 0-2 are committed and pushed (`5d65907`). **Phase 3 was handed to the user uncommitted** (they stage and commit); check `git log` / `git status` first to see whether it has landed.
+> **Last updated:** 2026-11-10, after Phase 4. Phases 0-3 are committed (Phase 3 as `da9d8a2`). **Phase 4 was handed to the user uncommitted** (they stage and commit); check `git log` / `git status` first to see whether it has landed.
 > **Read order for a new session:** this file → `CLAUDE.md` (rules that must not be weakened; git-ignored, so it may be missing on a fresh clone) → the doc for whatever you touch.
 > This file records *state and next steps*. It deliberately does not repeat the detail in
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/USAGE.md`](docs/USAGE.md),
@@ -24,12 +24,13 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Summary of how it c
 Browser (server-rendered Jinja + vanilla JS, strict CSP nonces)
   └─ Flask app (gunicorn, src/leyline/)  ── Redis: sessions + rate limits
        ├─ OIDC login (Authlib, PKCE)  ──►  Keycloak (local) / Entra ID (Azure, later)
-       ├─ /chat: rate limit → input rules → hybrid SearchIndex.search(principal) → authorize_hits → LLM
+       ├─ /api/chat/stream (SSE) and /chat: rate limit → injection scoring → (rewrite follow-up) → hybrid search(principal) → authorize_hits → delimited context → ChatModel → redact + verify citations → save
+       ├─ /api/conversations, /api/messages/<id>/feedback: owner-scoped history, citations re-authorized on read
        ├─ /admin/*: kb_admin API + page  ──►  IngestionService
-       └─ Postgres (+pgvector): documents, versions, document_acl, chunks(+vector(768), HNSW), ingestion_jobs, audit_events
+       └─ Postgres (+pgvector): documents, versions, document_acl, chunks(+vector(768), HNSW), ingestion_jobs, audit_events, conversations, messages, feedback
   Worker (same image): claims jobs → blob store → parse → chunk → embed → swap chunks in one tx
   Blob store: Azurite (local) / Azure Blob;  Embeddings: Ollama nomic-embed-text (local) / any OpenAI-compatible endpoint
-  LLM: Azure OpenAI "v1" Responses API via the `openai` SDK (src/leyline/services/llm.py), not configured locally
+  Chat model: `ChatModel` port (ports/llm.py) + OpenAI-compatible adapter with timeouts, retries and a circuit breaker; locally Ollama `qwen2.5:3b`, later Azure OpenAI. Prompts: services/llm.py. Guardrails: services/guardrails.py
   Evals: src/leyline/evals + evals/ (golden questions, thresholds, recorded embeddings) → CI gate
 ```
 
@@ -49,22 +50,27 @@ Browser (server-rendered Jinja + vanilla JS, strict CSP nonces)
 | 0 | `src/leyline/` restructure, app factory, typed config (fails fast in production), `/healthz` + `/readyz`, Dockerfile, ruff/mypy/pytest/pre-commit, CI, LICENSE | committed |
 | 1 | OIDC+PKCE login, Redis sessions, roles, CSRF, CSP nonces, Redis rate limiting, Keycloak realm with demo users, route x persona access matrix | committed |
 | 2 | Postgres + Alembic, validated PDF/DOCX/MD/TXT ingestion, chunker, idempotent uploads, atomic re-versioning, job queue + worker, admin UI, per-document group ACLs, audit trail, 49-doc corpus, seed + migration CLIs | committed, pushed |
-| 3 | Golden set (78 questions) + eval harness + CI gate; migration `0002` (`vector(768)` + HNSW); hybrid search with RRF, relevance floors, doc cap; contract suite; record/replay of real embeddings for offline CI; Ollama + nomic-embed-text | **built, uncommitted** |
+| 3 | Golden set (78 questions) + eval harness + CI gate; migration `0002` (`vector(768)` + HNSW); hybrid search with RRF, relevance floors, doc cap; contract suite; record/replay of real embeddings for offline CI; Ollama + nomic-embed-text | committed (`da9d8a2`) |
+| 4 | `ChatModel` port + resilient adapter (timeouts, retries, circuit breaker, 503 degraded mode); migration `0003` (conversations, messages, feedback); SSE streaming with cancel; verified, re-authorized citations; feedback; follow-up rewriting; token budget; guardrails; rebuilt UI; answer-quality eval | **built, uncommitted** |
 
 **Phase 3 results** ([`docs/EVALUATION.md`](docs/EVALUATION.md)): recall@5 0.796 -> **1.000**, MRR 0.640 -> **0.936**, recall@1 0.519 -> 0.889, correct refusals 25% -> **83%**, restricted pass 1.000, **0 ACL leaks** (gains confirmed on independent halves of the set).
+
+**Phase 4 results:** with `qwen2.5:3b`, answer eval ([`docs/EVALUATION.md`](docs/EVALUATION.md)): answered 0.926, cites a source 0.833, cites an expected document 0.778, figures supported 0.981, refusals 1.000, restricted pass 0.917, **0 ACL leaks**. Live checks: real model streamed in the browser; with Ollama stopped `/api/chat/stream` sent a clean `model_unavailable` error event.
+
+**Verification evidence (end of Phase 4):** 978 tests (977 + the one fixed after the full run: an inline `style=` the CSP forbids), 95% coverage; ruff, format, strict mypy clean; `E2E_CHAT=1 E2E_SEMANTIC=1 python scripts/e2e_login.py` passed against Keycloak + Postgres + Azurite + worker + Ollama. **Not verified:** CI on GitHub, load/concurrency of streaming (2 workers x 4 threads), mobile layout on a real device, screen-reader behaviour.
 
 **Verification evidence (end of Phase 3):** 837 tests pass with `CI=true` (nothing skipped), 95% coverage; `ruff`, `ruff format --check`, strict `mypy` clean; the exact CI evaluation step passed (twice, even with a competing worker); full-stack `scripts/e2e_login.py` with `E2E_SEMANTIC=1` passed against real Keycloak + Postgres + Azurite + worker + Ollama (including 6 semantic checks and a no-leak-through-paraphrase check); migration `0002` tested up/down with Phase-2-style data. **Not verified:** CI on GitHub (never observed), Python 3.11 locally, any real chat LLM (none configured), groundedness/citation quality (not measurable yet).
 
 ## 4. Current development status
 
-**Between phases.** Phase 3 is complete and was handed over for the user to commit. Nothing is in progress. Local machine state: Docker stack may be stopped; **Ollama (portable, installed via winget) may still be running in the background** (`Stop-Process -Name ollama` to stop; exe under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ollama.Ollama.Portable_*`); model `nomic-embed-text` is pulled; a git-ignored `.env` exists with only the embedding settings (no secrets). The dev database `leyline` holds the 49 seeded documents with embeddings.
+**Between phases.** Phase 4 is complete and was handed over for the user to commit. Nothing is in progress. Local machine state: Docker stack may be stopped; **Ollama (portable, installed via winget) may still be running in the background** (`Stop-Process -Name ollama` to stop; exe under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ollama.Ollama.Portable_*`); model `nomic-embed-text` is pulled; a git-ignored `.env` exists with only the embedding settings (no secrets). The dev database `leyline` holds the 49 seeded documents with embeddings.
 
 ## 5. Pending tasks
 
 Phase detail and acceptance gates live in [`docs/ROADMAP.md`](docs/ROADMAP.md); this is the actionable backlog.
 
 **Phase-bound**
-- **4** Conversation/message/feedback migration (`0003`); LLM resilience (timeouts, retries, circuit breaker, clean degraded mode: fixes the generic 500); SSE streaming + cancel; structured citations + feedback; layered prompt-injection guardrails (replace the 13-phrase denylist; delimit retrieved text as untrusted); follow-up query rewriting; UI rebuild; **groundedness and citation-accuracy evals** (deferred from Phase 3).
+- **4** done (see Completed work).
 - **5** Ticket escalation (`TicketProvider` port, built-in queue, agent view).
 - **6** OpenTelemetry; append-only audit log; SQL-backed monitoring dashboard; threat model + red-team evals; scanners (pip-audit, gitleaks, Trivy, CodeQL, ZAP); Locust load test.
 - **7** Bicep IaC, managed identity, Entra (incl. group overage via Microsoft Graph), Azure AI Search adapter, deploy pipeline, runbooks/ADRs.
@@ -108,7 +114,8 @@ Phase detail and acceptance gates live in [`docs/ROADMAP.md`](docs/ROADMAP.md); 
 | Group | Variables |
 | --- | --- |
 | Mode | `LEYLINE_ENV` (`local`/`test`/`production`), `FLASK_DEBUG` |
-| Model (needed for `/chat` answers) | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES` |
+| Chat model (needed for answers) | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (or the legacy `AZURE_OPENAI_ENDPOINT`/`_API_KEY`/`_DEPLOYMENT`), `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `LLM_BREAKER_FAILURES`, `LLM_BREAKER_RESET_SECONDS` |
+| Chat behaviour | `LLM_CONTEXT_TOKEN_BUDGET`, `CHAT_HISTORY_MESSAGES`, `CONVERSATION_RETENTION_DAYS` (0 = keep), `INJECTION_BLOCK_SCORE` |
 | Identity | `OIDC_METADATA_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_GROUPS_CLAIM`, `OIDC_ROLES_CLAIM` |
 | Sessions / edge | `REDIS_URL`, `SESSION_COOKIE_SECURE`, `SESSION_IDLE_SECONDS`, `SESSION_ABSOLUTE_SECONDS`, `TRUSTED_PROXY_COUNT` |
 | Data | `DATABASE_URL`, `BLOB_CONNECTION_STRING`, `BLOB_CONTAINER` |
@@ -134,37 +141,31 @@ Phase detail and acceptance gates live in [`docs/ROADMAP.md`](docs/ROADMAP.md); 
 
 ## 8. Known issues and limitations
 
-1. **Model failures return a generic 500** (no degraded mode); `services/llm.py` is barely tested and hard-wires the Azure URL shape. No chat model is configured locally, so real answer generation has never been run. → Phase 4.
+1. **Small local model quality.** `qwen2.5:3b` omits citations in ~1 in 6 answers and sometimes refuses when the sources answer (see EVALUATION.md). Expected to improve with a larger model; re-run `python -m leyline.evals.answers` after any model/prompt change.
 2. **Near-topic out-of-scope questions** can still return loosely related documents ("can I bring my dog to work?" -> visitors/access; "personal income tax" -> expenses): 2 of 12 unanswerable golden questions. A similarity floor cannot fully separate them; the grounding prompt and citations must. Without an embedding model, search is keyword-only (refusal 25%).
 3. **Floors are model-specific** (nomic-embed-text + prefixes). Changing the model/prefix requires re-index, a `--sweep`, new env values and updated thresholds; the recorded cache must be re-recorded (needs Ollama). Floors were tuned on the same 78 questions (checked on halves; re-check as the set grows).
 4. **A user's own group/role changes lag** until their session ends (<=12 h default); no back-channel logout. Document-side ACL changes and deletions are immediate.
 5. **Entra group "overage"** is only detected (`groups_incomplete`, fails closed); resolution through Microsoft Graph is not built. → Phase 7.
 6. **Monitoring and security events** are written to a local file (`logs/security_events.log`) and read back with `ast.literal_eval`; single-instance only, newest 10 events shown, the summary ignores newer event types. `audit_events` is separate and not append-only. → Phase 6.
-7. **Prompt-injection defence is weak:** a 13-phrase denylist; retrieved text is not delimited as untrusted. → Phase 4/6.
+7. **Prompt-injection defence is layered but not provable:** signals are scored (only blatant attacks refused), context is delimited and neutralised, the model has no tools, output is redacted and citations verified. A red-team eval suite and threat model are Phase 6.
 8. **Parsers run unsandboxed in the worker** (inputs are bounded; the job lease limits damage).
 9. **Documentation hygiene:** `.gitignore` ignores `CLAUDE.md`, `USAGE.md`, `DEVELOPMENT.md`, `DEPLOYMENT.md` by bare name. The three docs are tracked but `CLAUDE.md` is **untracked, so a fresh clone lacks it**, and any *new* file with those names would be silently ignored. Recommend removing those four lines from `.gitignore` and committing `CLAUDE.md` (user's call).
 10. **CI has never been observed on GitHub** (`gh` is not authenticated here). It now has Postgres/Azurite services and an evaluation step; Python 3.11 compatibility is untested locally.
 11. **The full test suite takes ~6 minutes** (real Postgres seeding); the CI job will be slow until parallelised.
-12. Retrieval quality is measured, but **groundedness, citation accuracy and answer quality are not** (need Phase 4). The eval cache `evals/embeddings.json` (~880 KB) is a generated file committed on purpose.
+12. Retrieval quality is CI-gated; **answer quality is measured manually** (needs a chat model; not in CI). The eval cache `evals/embeddings.json` (~880 KB) is a generated file committed on purpose.
 13. Dev-only conveniences (shared demo passwords, plain HTTP Keycloak, Postgres dev password, public Azurite key) are for local use only. `kb_admin` can see titles/ACLs of restricted documents (accepted; never content).
 14. The host-run app on port 5000 is not a registered Keycloak redirect URI (documented workaround). Local Postgres holds scratch databases `leyline_test` / `leyline_scratch_test` (recreated by tests).
 
 ## 9. Next development phases (prioritised)
 
-1. **Phase 4 - chat experience (next; the biggest user-visible gap).** In order: (a) LLM resilience + a configurable chat-model backend (fixes Known issue #1 and unblocks everything else); (b) conversation/message/feedback migration `0003` and persistence; (c) SSE streaming + cancel; (d) structured citations (use `SearchHit.title/heading/chunk_id`) + feedback; (e) guardrails (delimit untrusted context, replace the denylist with scoring/logging, verify citations against retrieved chunks); (f) follow-up query rewriting + token budget; (g) UI rebuild; (h) groundedness/citation evals added to the harness.
-2. **Phase 5 - ticket escalation**, then **Phase 6 - hardening/observability**, then **Phase 7 - Azure** (needs a subscription; confirm budget/access with the user first).
+1. ~~**Phase 4 - chat experience**~~ (done). Original order, for reference: In order: (a) LLM resilience + a configurable chat-model backend (fixes Known issue #1 and unblocks everything else); (b) conversation/message/feedback migration `0003` and persistence; (c) SSE streaming + cancel; (d) structured citations (use `SearchHit.title/heading/chunk_id`) + feedback; (e) guardrails (delimit untrusted context, replace the denylist with scoring/logging, verify citations against retrieved chunks); (f) follow-up query rewriting + token budget; (g) UI rebuild; (h) groundedness/citation evals added to the harness.
+2. **Phase 5 - ticket escalation (next)**, then **Phase 6 - hardening/observability**, then **Phase 7 - Azure** (needs a subscription; confirm budget/access with the user first).
 3. **Cross-cutting, every phase:** update `docs/ROADMAP.md` status, keep `docs/ARCHITECTURE.md` accurate, add allowed-path *and* denied-path tests for anything security-relevant, never lower eval floors, keep the production-grade gates in `docs/ROADMAP.md` in view (zero ACL leaks, >=85% coverage, no secrets, scanner-clean, repeatable deploy).
 
 ## 10. Immediate next step
 
-**Start Phase 4, step (a): make the answer-generation path resilient and runnable locally.**
+**Start Phase 5: ticket escalation.** Session start checklist: `git log`/`git status` (has Phase 4 landed?) → start Docker Desktop → `docker compose up -d postgres azurite` → activate `.venv` → `CI=true python -m pytest -q` (expect ~978 passed, ~7 min), `python -m ruff check .`, `python -m mypy`. Start Ollama if needed (see §4; models `nomic-embed-text` and `qwen2.5:3b` are pulled) and `docker compose up -d --build` for the stack (`.env` holds the Ollama embedding and chat settings).
 
-Session start checklist: check `git log`/`git status` (has Phase 3 been committed?) → start Docker Desktop → `docker compose up -d postgres azurite` → activate `.venv` → `CI=true python -m pytest -q` (expect **837 passed**, ~6 min), `python -m ruff check .`, `python -m mypy` (all clean). If Ollama is not running, start it (see §4).
+Plan (from `docs/ROADMAP.md`): an "Escalate" action that pre-fills a summary the user reviews and edits before sending; a `TicketProvider` port and built-in queue (migration `0004`: tickets, ticket_events); an agent view for `support_agent` (status, assignment, comments); tickets contain **only what the user approved**, so restricted context cannot reach agents who lack access (agents get no document text; citations are titles the *user* could read, re-checked). Every new route needs an access-matrix entry and allowed/denied tests. Ask the user before building if any product choice is open (for example which fields a ticket carries).
 
-Then:
-1. **Ask the user which chat model to use locally** (decision pending). Ollama is already installed, so a small local model is the cheapest option (the machine has an RTX 3050 with 4 GB, so roughly a 3B-parameter model, e.g. `llama3.2:3b` or `qwen2.5:3b`, ~2 GB download); alternatives are an OpenAI API key (user keeps it in `.env`) or waiting for Azure OpenAI. Do not download or install anything until they answer.
-2. Refactor `src/leyline/services/llm.py` behind a small `LLM` port (the codebase already uses ports for blob/embeddings/search): configurable base URL and API style (so Azure `/openai/v1/`, OpenAI and Ollama's OpenAI-compatible API all work), explicit timeouts, bounded retries, a circuit breaker, and a **clean degraded mode**: a model outage must return a clear 503-style message and log a `MODEL_ERROR` event, never a generic 500.
-3. Test it the same way the embeddings adapter is tested (a local fake HTTP server speaking the API, in `tests/test_adapters_and_cli.py` style): success, timeout, 5xx with retry, circuit open, malformed response, and that the chat route degrades cleanly and keeps ACL behaviour unchanged.
-4. Raise `services/llm.py` coverage from ~20%, update `docs/ARCHITECTURE.md`/`USAGE.md`, and add a `MODEL_ERROR` row to the monitoring summary.
-
-**Done when:** a question works end to end against a real local model; with the model stopped, `/chat` answers with a clear degraded-mode message (verified by test and by the live stack), full verification is green, and the user has a commit message (they commit).
+**Done when:** the full flow from an unsatisfying answer to a resolved ticket passes an end-to-end test, and the user has a commit message (they commit).

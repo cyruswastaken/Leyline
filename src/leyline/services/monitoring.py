@@ -45,6 +45,7 @@ def get_security_summary() -> dict[str, Any]:
         "rate_limits_exceeded": 0,
         "retrieval_requests": 0,
         "no_results_found": 0,
+        "model_errors": 0,
     }
 
     for event in events:
@@ -64,6 +65,9 @@ def get_security_summary() -> dict[str, Any]:
 
         elif event_type == "NO_RESULTS_FOUND":
             summary["no_results_found"] += 1
+
+        elif event_type == "MODEL_ERROR":
+            summary["model_errors"] += 1
 
     return summary
 

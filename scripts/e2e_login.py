@@ -14,6 +14,7 @@ Run: python scripts/e2e_login.py
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 import sys
@@ -115,15 +116,15 @@ class Stack:
     def post(self, username: str, path: str, **kwargs) -> requests.Response:
         headers = {"X-CSRF-Token": self.csrf[username]}
         return self.sessions[username].post(
-            f"{APP}{path}", headers=headers, timeout=30, **kwargs
+            f"{APP}{path}", headers=headers, timeout=240, **kwargs
         )
 
     def retrieved(self, username: str, question: str) -> str | None:
         """What this user's question retrieved first, read from the audit trail.
 
-        Chat may answer 500 here (no model is configured in the dev stack);
-        retrieval is logged before the model is called, so it still tells us
-        exactly which document the permission-aware search selected.
+        Retrieval is logged before the model is called (and the model may be
+        slow, absent or down), so the audit trail tells us exactly which
+        document the permission-aware search selected.
         """
         auditor = self.sessions["ada.auditor"]
 
@@ -140,6 +141,30 @@ class Stack:
             ):
                 return event["details"]["selected_source"]
         raise Failure(f"FAIL: no retrieval event for {username}: {question!r}")
+
+    def stream(
+        self, username: str, message: str, conversation_id: str | None = None
+    ) -> list[tuple[str, dict]]:
+        """One conversation turn over server-sent events."""
+        response = self.post(
+            username,
+            "/api/chat/stream",
+            json={"message": message, "conversation_id": conversation_id},
+        )
+        check(
+            response.status_code == 200,
+            f"{username}: stream returned {response.status_code} {response.text[:200]}",
+        )
+        events = []
+        for block in response.text.strip().split("\n\n"):
+            fields = dict(line.split(": ", 1) for line in block.split("\n"))
+            events.append((fields["event"], json.loads(fields["data"])))
+        return events
+
+    def get_json(self, username: str, path: str) -> requests.Response:
+        return self.sessions[username].get(
+            f"{APP}{path}", headers={"Accept": "application/json"}, timeout=30
+        )
 
     def documents(self) -> list[dict]:
         response = self.sessions["kim.admin"].get(
@@ -248,6 +273,76 @@ def main() -> int:
         print(
             f"ok  {len(meaning_cases) + 1} semantic retrieval checks (paraphrases, refusal, no leak)"
         )
+
+    # --- conversations with a real chat model (opt in with E2E_CHAT=1) ------------
+    if os.environ.get("E2E_CHAT") == "1":
+        ready = requests.get(f"{APP}/readyz", timeout=15).json()
+        check(
+            ready["checks"]["llm_configured"],
+            "E2E_CHAT=1 but no chat model is configured",
+        )
+
+        events = stack.stream(
+            "alice.employee", "How do I connect to the corporate VPN?"
+        )
+        kinds = [kind for kind, _ in events]
+        check(
+            kinds[0] == "meta" and kinds[-1] == "done",
+            f"turn did not complete: {kinds[-3:]}",
+        )
+        done = events[-1][1]
+        check(len(done["content"]) > 20, f"answer is empty: {done['content']!r}")
+        titles = {c["title"] for c in done["citations"]}
+        check(
+            "Corporate VPN Setup Guide" in titles, f"VPN guide not retrieved: {titles}"
+        )
+        print(
+            f"ok  streamed answer ({kinds.count('delta')} chunks, sources={sorted(titles)})"
+        )
+        conversation_id = events[0][1]["conversation_id"]
+
+        follow = stack.stream(
+            "alice.employee", "and what if it asks for a code?", conversation_id
+        )
+        check(follow[-1][0] == "done", f"follow-up did not complete: {follow[-1]}")
+        saved = stack.get_json(
+            "alice.employee", f"/api/conversations/{conversation_id}"
+        )
+        roles = [m["role"] for m in saved.json()["messages"]]
+        check(roles == ["user", "assistant", "user", "assistant"], f"history: {roles}")
+        print("ok  follow-up turn saved in the same conversation")
+
+        rated = stack.post(
+            "alice.employee",
+            f"/api/messages/{done['message_id']}/feedback",
+            json={"rating": 1},
+        )
+        check(rated.status_code == 200, f"feedback returned {rated.status_code}")
+
+        other = stack.get_json("sam.security", f"/api/conversations/{conversation_id}")
+        check(
+            other.status_code == 404,
+            f"another user read the conversation: {other.status_code}",
+        )
+
+        employee_net = stack.stream("alice.employee", network)
+        leaked = [c["title"] for c in employee_net[-1][1].get("citations", [])]
+        check(
+            "Internal Network Architecture Overview" not in leaked,
+            f"employee was cited a restricted document: {leaked}",
+        )
+        security_net = stack.stream("sam.security", network)
+        cited = [c["title"] for c in security_net[-1][1].get("citations", [])]
+        check(
+            "Internal Network Architecture Overview" in cited,
+            f"security was not given the document they may read: {cited}",
+        )
+        refused = stack.stream("alice.employee", "What is the capital of Australia?")
+        check(
+            "couldn't find" in refused[-1][1]["content"],
+            f"out-of-scope question was answered: {refused[-1][1]['content'][:100]!r}",
+        )
+        print("ok  chat feedback, ownership, permissions and refusals")
 
     # --- administrators: authorization and validation ----------------------------
     check(

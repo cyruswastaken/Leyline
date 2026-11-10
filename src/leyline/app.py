@@ -14,6 +14,8 @@ from leyline.config import Settings, get_settings
 from leyline.db.database import Database
 from leyline.extensions import (
     BLOB_KEY,
+    CHAT_MODEL_KEY,
+    CONVERSATIONS_KEY,
     DATABASE_KEY,
     EMBEDDER_KEY,
     INGESTION_KEY,
@@ -26,12 +28,15 @@ from leyline.extensions import (
 from leyline.ingestion.service import IngestionService
 from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
+from leyline.ports.llm import ChatModel
 from leyline.ports.search import SearchIndex
 from leyline.ratelimit import RedisRateLimiter
 from leyline.security_headers import init_security_headers
+from leyline.services.conversations import ConversationService
 from leyline.services.logger import log_security_event
 from leyline.wiring import (
     build_blob_store,
+    build_chat_model,
     build_database,
     build_embedder,
     build_search_index,
@@ -50,6 +55,7 @@ def create_app(
     blob_store: BlobStore | None = None,
     embedder: Embedder | None = None,
     search_index: SearchIndex | None = None,
+    chat_model: ChatModel | None = None,
 ) -> Flask:
     """Build the application. Collaborators default to ones built from
     settings; tests inject their own."""
@@ -89,6 +95,10 @@ def create_app(
     app.extensions[BLOB_KEY] = blob_store
     app.extensions[EMBEDDER_KEY] = embedder
     app.extensions[SEARCH_KEY] = search_index
+    app.extensions[CHAT_MODEL_KEY] = chat_model or build_chat_model(settings)
+    app.extensions[CONVERSATIONS_KEY] = (
+        ConversationService(database) if database is not None else None
+    )
     app.extensions[INGESTION_KEY] = (
         IngestionService(database, blob_store, embedder, settings)
         if database is not None and blob_store is not None

@@ -11,12 +11,15 @@ import argparse
 import logging
 import signal
 import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from leyline.config import Settings, get_settings
 from leyline.db.database import Database
 from leyline.ingestion import jobs
 from leyline.ingestion.service import IngestionService
+from leyline.services.conversations import ConversationService
 from leyline.wiring import (
     build_blob_store,
     build_database,
@@ -35,14 +38,25 @@ def run_worker(
     stop: threading.Event,
     once: bool = False,
     heartbeat: Path | None = None,
+    maintenance: Callable[[], None] | None = None,
+    maintenance_interval: float = 3600.0,
 ) -> int:
     """Process jobs until stopped (or, with ``once``, until the queue is empty).
 
-    Returns the number of jobs processed.
+    ``maintenance`` (for example conversation retention) runs on the first
+    iteration and then every ``maintenance_interval`` seconds; a failure is
+    logged and never stops the worker. Returns the number of jobs processed.
     """
     processed = 0
+    next_maintenance = time.monotonic()
     while not stop.is_set():
         _beat(heartbeat)
+        if maintenance is not None and time.monotonic() >= next_maintenance:
+            next_maintenance = time.monotonic() + maintenance_interval
+            try:
+                maintenance()
+            except Exception:
+                log.exception("maintenance task failed")
         with database.session() as session:
             job = jobs.claim(session, lease_seconds=settings.ingest_lease_seconds)
 
@@ -101,6 +115,13 @@ def main(argv: list[str] | None = None) -> int:
         "worker started (embeddings: %s)",
         "on" if settings.embeddings_configured else "off",
     )
+    conversations = ConversationService(database)
+
+    def retention() -> None:
+        removed = conversations.purge_older_than(settings.conversation_retention_days)
+        if removed:
+            log.info("retention: deleted %s old conversations", removed)
+
     try:
         run_worker(
             service,
@@ -109,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             stop=stop,
             once=args.once,
             heartbeat=settings.worker_heartbeat_path,
+            maintenance=retention if settings.conversation_retention_days else None,
         )
     finally:
         database.dispose()

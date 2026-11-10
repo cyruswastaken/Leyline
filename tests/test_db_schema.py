@@ -16,10 +16,13 @@ EXPECTED_TABLES = {
     "alembic_version",
     "audit_events",
     "chunks",
+    "conversations",
     "document_acl",
     "document_versions",
     "documents",
+    "feedback",
     "ingestion_jobs",
+    "messages",
 }
 
 

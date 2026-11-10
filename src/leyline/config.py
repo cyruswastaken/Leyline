@@ -33,11 +33,20 @@ class Settings(BaseSettings):
     leyline_env: Literal["local", "test", "production"] = "local"
     flask_debug: bool = False
 
+    # Chat model: any OpenAI-compatible endpoint (Ollama, OpenAI, Azure OpenAI v1).
+    # LLM_BASE_URL / LLM_MODEL / LLM_API_KEY take precedence; the AZURE_OPENAI_*
+    # trio is still understood and maps to ``<endpoint>/openai/v1/``.
+    llm_base_url: str | None = None
+    llm_api_key: SecretStr | None = None
+    llm_model: str | None = None
     azure_openai_endpoint: str | None = None
     azure_openai_api_key: SecretStr | None = None
     azure_openai_deployment: str | None = None
     llm_timeout_seconds: float = Field(default=30, gt=0)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
+    # Consecutive failures before the circuit opens, and how long it stays open.
+    llm_breaker_failures: int = Field(default=5, gt=0)
+    llm_breaker_reset_seconds: float = Field(default=30, gt=0)
 
     corpus_dir: Path = REPO_ROOT / "corpus"
     log_dir: Path = REPO_ROOT / "logs"
@@ -123,6 +132,16 @@ class Settings(BaseSettings):
     # At most this many chunks of one document in a result list.
     search_max_chunks_per_document: int = Field(default=2, gt=0)
 
+    # --- Chat ----------------------------------------------------------------
+    # Rough token budget for retrieved text in one prompt (about 4 chars/token).
+    llm_context_token_budget: int = Field(default=3000, gt=200)
+    # How many of the user's earlier questions are used to rewrite a follow-up.
+    chat_history_messages: int = Field(default=4, ge=0, le=20)
+    # Conversations idle longer than this are deleted for good; 0 keeps them.
+    conversation_retention_days: int = Field(default=0, ge=0)
+    # A message scoring at least this on injection signals is refused (403).
+    injection_block_score: int = Field(default=4, gt=0)
+
     max_message_length: int = Field(default=2000, gt=0)
     max_request_bytes: int = Field(default=16 * 1024, gt=0)
     rate_limit_requests: int = Field(default=10, gt=0)
@@ -131,12 +150,26 @@ class Settings(BaseSettings):
     rate_limit_ip_requests: int = Field(default=120, gt=0)
 
     @property
-    def llm_configured(self) -> bool:
-        return bool(
+    def llm_endpoint(self) -> tuple[str, str, str] | None:
+        """(base_url, api_key, model) for the chat model, or None."""
+        if self.llm_base_url and self.llm_model:
+            key = self.llm_api_key.get_secret_value() if self.llm_api_key else ""
+            return self.llm_base_url, key, self.llm_model
+        if (
             self.azure_openai_endpoint
             and self.azure_openai_api_key
             and self.azure_openai_deployment
-        )
+        ):
+            return (
+                f"{self.azure_openai_endpoint.rstrip('/')}/openai/v1/",
+                self.azure_openai_api_key.get_secret_value(),
+                self.azure_openai_deployment,
+            )
+        return None
+
+    @property
+    def llm_configured(self) -> bool:
+        return self.llm_endpoint is not None
 
     @property
     def oidc_configured(self) -> bool:
@@ -181,8 +214,9 @@ class Settings(BaseSettings):
                 raise ValueError("FLASK_DEBUG must be off in production")
             if not self.llm_configured:
                 raise ValueError(
-                    "AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and "
-                    "AZURE_OPENAI_DEPLOYMENT are required in production"
+                    "LLM_BASE_URL and LLM_MODEL (or AZURE_OPENAI_ENDPOINT, "
+                    "AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT) are "
+                    "required in production"
                 )
             if not self.oidc_configured:
                 raise ValueError(

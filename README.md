@@ -66,7 +66,7 @@ This is a portfolio project being built to production standards. The included do
 
 ## Project status
 
-Leyline is under active development and is **not yet safe for real data**. Phases 0 (security fixes, tests, CI, container), 1 (identity and access), 2 (database, document ingestion, per-document ACLs) and 3 (hybrid retrieval and an evaluation gate) are complete; Phase 4 (chat experience: conversations, streaming, citations) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
+Leyline is under active development and is **not yet safe for real data**. Phases 0 (security fixes, tests, CI, container), 1 (identity and access), 2 (database, document ingestion, per-document ACLs) and 3 (hybrid retrieval and an evaluation gate) and 4 (chat experience: conversations, streaming, citations, guardrails) are complete; Phase 5 (ticket escalation) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
 
 ## License
 

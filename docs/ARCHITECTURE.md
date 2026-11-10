@@ -14,7 +14,7 @@ Browser
   -> CSRF check                             (signed-in, state-changing requests)
   -> route: login_required / require_roles  (deny by default)
   -> per-user rate limit                    (Redis)
-  -> blocked-pattern validation
+  -> injection scoring
   -> permission-aware hybrid search         (keyword + vector legs, ACL predicate inside each query)
   -> re-authorization of every hit          (against the database, just before use)
   -> grounded language-model response
@@ -117,6 +117,42 @@ keyword search (the keyword floor is not applied then); evaluations run in a str
 refuses to degrade silently. Tie-breaks are deterministic (title, chunk position), so results are
 reproducible. Quality is measured and gated in CI; see [EVALUATION.md](EVALUATION.md).
 
+## Answer generation
+
+`ChatModel` (`ports/llm.py`) is the only way the app talks to a language model; the model gets a
+system prompt and a user prompt and **no tools**. `OpenAICompatibleChatModel` serves Ollama, OpenAI
+and Azure OpenAI (v1 API). It maps every provider failure (timeout, connection error, HTTP error,
+malformed or empty reply) to `ModelUnavailableError` with a short reason and never passes the
+provider's message on, and a `CircuitBreaker` fails fast after repeated failures (one trial call
+is let through after the reset period). The chat service turns that error into a `503`
+(`model_unavailable`) plus a `MODEL_ERROR` event instead of a generic 500. Prompt text and
+grounding rules live in `services/llm.py`; context reaches it only after search and `authorize_hits`.
+
+## Conversations, streaming and guardrails
+
+A turn (`POST /api/chat/stream`, `services/chat_service.py`) runs: per-user rate limit -> injection
+scoring -> conversation ownership check -> query rewriting (follow-ups only, from the user's own
+earlier questions) -> permission-aware search -> `authorize_hits` -> numbered, delimited context ->
+streamed model output -> credential redaction -> citation verification -> persistence. The model
+call happens only after authorization, so unauthorized text cannot reach a prompt, and assistant
+messages are never placed back into a prompt (an ACL may have changed since they were written).
+
+- **Storage (migration `0003`):** `conversations` (owner-scoped, soft delete, retention purge),
+  `messages` (role, status `complete | error | cancelled`, citation snapshot as JSON) and `feedback`
+  (one rating per user and message). Citations hold ids and titles only; `ConversationService.get`
+  re-checks each cited document with `readable_by` on every read.
+- **Streaming:** server-sent events over a POST (`meta`, `delta`, `done` | `error`). Closing the
+  connection closes the generator, which closes the model stream and saves the partial answer as
+  `cancelled`. A model failure mid-stream saves what was said as `error` and sends an `error`
+  event; failures before streaming starts (rate limit, rejection, unknown conversation) are normal
+  HTTP errors.
+- **Guardrails (`services/guardrails.py`):** injection signals are scored, logged and only block at
+  a high score (phrase lists are evadable, so they are not the defence); retrieved text is wrapped in
+  `<untrusted_context><source id="n">` with any look-alike tags neutralised and a token budget;
+  citation markers that do not match a retrieved source are stripped; `StreamRedactor` removes
+  credential-shaped strings and holds back unfinished words so a secret cannot slip out in halves.
+  The model has no tools.
+
 ## Sessions
 
 The browser holds only an opaque random 256-bit id in an `HttpOnly`, `SameSite=Lax` cookie (`__Host-` prefixed and `Secure` when `SESSION_COOKIE_SECURE=true`). The principal and CSRF token live in Redis.
@@ -172,9 +208,9 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the outline and [ROADMAP.md](ROADMAP.md) 
 - **Administrators see metadata.** `kb_admin` can see titles, filenames and ACLs of every document, including restricted ones, but never their content.
 - **Relevance floors are model-specific.** The shipped floors are calibrated for `nomic-embed-text`; another model needs a re-calibration sweep. Near-topic out-of-scope questions ("can I bring my dog to work?") can still return loosely related documents. Without an embedding model, search is keyword-only and refuses far less.
 - **Parsing runs in the worker process.** Inputs are bounded and validated, but a maliciously crafted PDF could still consume CPU/memory in the worker; the job lease limits the blast radius. Sandboxing parsers is a later hardening step.
-- **Prompt injection.** Pattern-based checks cannot detect every rephrased attack, and retrieved text is not yet clearly delimited as untrusted (Phase 4 adds layered guardrails).
+- **Prompt injection.** Signal scoring cannot detect every rephrased attack, and a model can still be talked into a bad answer by retrieved text. The controls that do not depend on the model are what bound the damage: authorization before retrieval, a model with no tools, delimited and neutralised context, verified citations and output redaction. A small local model follows grounding rules less reliably than a large hosted one.
 - **Audit trail.** Administrative actions are audited in Postgres, but security events (logins, denials, retrievals) still go to a local file, and `audit_events` is not yet append-only (Phase 6).
-- The model call has a timeout and retries but no graceful degraded mode yet; a model outage currently returns a generic 500 (Phase 4).
+- Streaming holds a gunicorn thread for the length of an answer (the container runs 2 workers x 4 threads); capacity planning and load targets come in Phase 6.
 - Secrets in environment variables should be replaced with managed identity or Key Vault references in production.
 - The development Keycloak realm uses shared demo passwords over plain HTTP, and Azurite uses Microsoft's published development key; both exist only for local use.
 - The corpus is synthetic and has not been independently security tested.
