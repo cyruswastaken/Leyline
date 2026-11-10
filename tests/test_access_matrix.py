@@ -12,7 +12,13 @@ import pytest
 
 from tests.support import CSRF_HEADER, PERSONAS, login_as
 
-PUBLIC, USER, AUDITOR, KB_ADMIN = "public", "user", "auditor", "kb_admin"
+PUBLIC, USER, AUDITOR, KB_ADMIN, SUPPORT = (
+    "public",
+    "user",
+    "auditor",
+    "kb_admin",
+    "support_agent",
+)
 
 SOME_ID = str(uuid.uuid4())
 
@@ -40,6 +46,27 @@ POLICY = {
         f"/api/messages/{SOME_ID}/feedback",
     ),
     ("POST", "/logout"): (USER, "/logout"),
+    ("GET", "/tickets"): (USER, "/tickets"),
+    ("POST", "/api/conversations/<uuid:conversation_id>/escalation-draft"): (
+        USER,
+        f"/api/conversations/{SOME_ID}/escalation-draft",
+    ),
+    ("GET", "/api/tickets"): (USER, "/api/tickets"),
+    ("POST", "/api/tickets"): (USER, "/api/tickets"),
+    ("GET", "/api/tickets/<uuid:ticket_id>"): (USER, f"/api/tickets/{SOME_ID}"),
+    ("POST", "/api/tickets/<uuid:ticket_id>/comments"): (
+        USER,
+        f"/api/tickets/{SOME_ID}/comments",
+    ),
+    ("POST", "/api/tickets/<uuid:ticket_id>/status"): (
+        USER,
+        f"/api/tickets/{SOME_ID}/status",
+    ),
+    ("GET", "/api/agent/tickets"): (SUPPORT, "/api/agent/tickets"),
+    ("POST", "/api/agent/tickets/<uuid:ticket_id>/assign"): (
+        SUPPORT,
+        f"/api/agent/tickets/{SOME_ID}/assign",
+    ),
     ("GET", "/monitoring"): (AUDITOR, "/monitoring"),
     ("GET", "/monitoring/summary"): (AUDITOR, "/monitoring/summary"),
     ("GET", "/monitoring/events"): (AUDITOR, "/monitoring/events"),
@@ -70,7 +97,7 @@ POLICY = {
 
 PERSONA_NAMES = ["anonymous", *PERSONAS]
 # Which personas hold each application role (see tests/support.py).
-HOLDERS = {AUDITOR: {"auditor"}, KB_ADMIN: {"kb_admin"}}
+HOLDERS = {AUDITOR: {"auditor"}, KB_ADMIN: {"kb_admin"}, SUPPORT: {"support_agent"}}
 
 
 def expected_allowed(kind: str, persona: str) -> bool:
@@ -90,6 +117,16 @@ def call(client, method, path, token):
         kwargs["json"] = {"message": "How do I set up the VPN?"}
     if path.endswith("/feedback"):
         kwargs["json"] = {"rating": 1}
+    if path == "/api/tickets":
+        kwargs["json"] = {"subject": "Printer", "description": "It is broken"}
+    if path.endswith("/comments"):
+        kwargs["json"] = {"body": "hello"}
+    if path.endswith("/status"):
+        kwargs["json"] = {"status": "closed"}
+    if path.endswith("/assign"):
+        kwargs["json"] = {"assign": True}
+    if path.endswith("/escalation-draft"):
+        kwargs["json"] = {}
     if method == "PUT":
         kwargs["json"] = {"groups": ["staff"]}
     return client.open(path, method=method, headers=headers, **kwargs)
@@ -125,7 +162,7 @@ def test_access_matrix(db_app, persona, method, rule):
         # Allowed through the access check. Admin routes may still answer 400
         # or 404 (no file / unknown id): that is the handler, not a denial.
         assert response.status_code not in (401, 403), response.get_data(as_text=True)
-        if path.startswith("/api/conversations/") or path.endswith("/feedback"):
+        if kind in (USER, SUPPORT) and SOME_ID in path:
             # An id nobody owns: the handler answers 404, which is not a denial.
             assert response.status_code == 404
         elif (kind in (USER, AUDITOR) and method == "GET") or path in (

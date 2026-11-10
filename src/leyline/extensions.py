@@ -14,6 +14,7 @@ from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
 from leyline.ports.llm import ChatModel
 from leyline.ports.search import SearchIndex
+from leyline.ports.tickets import TicketProvider
 from leyline.ratelimit import RedisRateLimiter
 from leyline.services.conversations import ConversationService
 
@@ -27,6 +28,7 @@ SEARCH_KEY = "leyline.search_index"
 INGESTION_KEY = "leyline.ingestion"
 CHAT_MODEL_KEY = "leyline.chat_model"
 CONVERSATIONS_KEY = "leyline.conversations"
+TICKETS_KEY = "leyline.tickets"
 
 
 class NotConfiguredError(RuntimeError):
@@ -70,6 +72,10 @@ def ingestion_service() -> IngestionService:
 
 def conversation_service() -> ConversationService:
     return cast(ConversationService, _get(CONVERSATIONS_KEY, "conversations"))
+
+
+def ticket_provider() -> TicketProvider:
+    return cast(TicketProvider, _get(TICKETS_KEY, "tickets"))
 
 
 def chat_model() -> ChatModel | None:

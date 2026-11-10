@@ -91,6 +91,7 @@ def events(monkeypatch):
         "leyline.web.auth",
         "leyline.auth.access",
         "leyline.app",
+        "leyline.web.tickets",
     ):
         monkeypatch.setattr(f"{target}.log_security_event", record)
     return recorded
@@ -110,7 +111,7 @@ def login(client):
 
 _TABLES = (
     "chunks, ingestion_jobs, document_acl, document_versions, documents, audit_events, "
-    "feedback, messages, conversations"
+    "feedback, messages, conversations, ticket_events, tickets"
 )
 
 

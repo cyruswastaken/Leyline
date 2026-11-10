@@ -142,6 +142,13 @@ class Settings(BaseSettings):
     # A message scoring at least this on injection signals is refused (403).
     injection_block_score: int = Field(default=4, gt=0)
 
+    # --- Tickets ---------------------------------------------------------------
+    ticket_max_subject: int = Field(default=150, gt=0)
+    ticket_max_description: int = Field(default=5000, gt=0)
+    ticket_max_comment: int = Field(default=2000, gt=0)
+    # New tickets per user per rate-limit window (comments use the chat limit).
+    ticket_rate_limit: int = Field(default=5, gt=0)
+
     max_message_length: int = Field(default=2000, gt=0)
     max_request_bytes: int = Field(default=16 * 1024, gt=0)
     rate_limit_requests: int = Field(default=10, gt=0)

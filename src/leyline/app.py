@@ -6,6 +6,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from leyline.adapters.tickets_postgres import PostgresTicketProvider
 from leyline.auth.access import current_principal, load_principal
 from leyline.auth.csrf import SAFE_METHODS, csrf_failure_reason
 from leyline.auth.oidc import init_oidc
@@ -23,6 +24,7 @@ from leyline.extensions import (
     REDIS_KEY,
     SEARCH_KEY,
     SETTINGS_KEY,
+    TICKETS_KEY,
     NotConfiguredError,
 )
 from leyline.ingestion.service import IngestionService
@@ -96,6 +98,9 @@ def create_app(
     app.extensions[EMBEDDER_KEY] = embedder
     app.extensions[SEARCH_KEY] = search_index
     app.extensions[CHAT_MODEL_KEY] = chat_model or build_chat_model(settings)
+    app.extensions[TICKETS_KEY] = (
+        PostgresTicketProvider(database) if database is not None else None
+    )
     app.extensions[CONVERSATIONS_KEY] = (
         ConversationService(database) if database is not None else None
     )
@@ -177,13 +182,14 @@ def create_app(
         g.pop("principal", None)
         return jsonify({"error": "Service temporarily unavailable"}), 503
 
-    from leyline.web import admin, auth, chat, health, monitoring
+    from leyline.web import admin, auth, chat, health, monitoring, tickets
 
     app.register_blueprint(health.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(chat.bp)
     app.register_blueprint(admin.bp)
     app.register_blueprint(monitoring.bp)
+    app.register_blueprint(tickets.bp)
 
     return app
 

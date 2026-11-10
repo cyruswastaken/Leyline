@@ -179,6 +179,12 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Done when:** the full flow from failed answer to resolved ticket passes an end-to-end test.
 
+**Phase 5 status: complete.** Delivered: migration `0004` (tickets, ticket events), a `TicketProvider` port with the built-in Postgres queue, a "Contact support" draft the user edits before sending (built only from their own words), a ticket page for requesters and an agent queue (assign, comment, status), per-user creation rate limit, credential scrubbing, security events for ticket actions, access-matrix entries for every new route, and a full-flow test plus a real-stack check. Choices made along the way:
+
+- **No internal notes:** every comment is visible to both requester and agents, so nothing hidden can be mistaken for private.
+- **No conversation link:** a ticket does not point back to the conversation, so agents cannot reach it; users who want agents to see an answer paste it into the ticket themselves.
+- **No external ticketing system yet:** ServiceNow/Jira are future `TicketProvider` implementations.
+
 ### Phase 6: Hardening and observability (about 1-2 weeks)
 - OpenTelemetry traces and metrics: per-stage latency, tokens, cost, no-answer rate, feedback score. JSON logs to stdout, with prompts excluded by default.
 - Append-only audit log; rebuild the security dashboard on SQL with role-gated access.

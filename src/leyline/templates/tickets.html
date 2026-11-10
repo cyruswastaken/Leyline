@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="is-agent" content="{{ 'yes' if 'support_agent' in user.roles else 'no' }}">
+    <title>Support tickets</title>
+    <style nonce="{{ csp_nonce }}">
+        :root { --bg:#f4f6f8; --panel:#fff; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --brand:#2563eb; --header:#1f2937; --focus:#f59e0b; --danger:#b91c1c; }
+        * { box-sizing: border-box; }
+        body { margin:0; font-family: system-ui, Arial, sans-serif; background:var(--bg); color:var(--ink); }
+        :focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+        header.bar { background:var(--header); color:#fff; padding:12px 20px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+        header.bar h1 { margin:0; font-size:18px; }
+        header.bar a { color:#fff; opacity:.85; text-decoration:none; margin-left:14px; } header.bar a:hover { opacity:1; text-decoration:underline; }
+        main { max-width:1000px; margin:0 auto; padding:20px; display:grid; grid-template-columns: 320px 1fr; gap:20px; }
+        @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+        section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+        h2 { margin:0 0 10px; font-size:16px; }
+        ul.list { list-style:none; margin:0; padding:0; }
+        ul.list li button { width:100%; text-align:left; border:0; background:transparent; padding:9px 8px; border-radius:6px; cursor:pointer; font:inherit; }
+        ul.list li button:hover, ul.list li.active button { background:#e8eefc; }
+        .meta { color:var(--muted); font-size:13px; }
+        .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; background:#e5e7eb; margin-left:6px; }
+        .badge.open { background:#fef3c7; } .badge.in_progress { background:#dbeafe; } .badge.resolved { background:#dcfce7; } .badge.closed { background:#e5e7eb; }
+        .event { border-top:1px solid var(--line); padding:8px 0; font-size:14px; white-space:pre-wrap; overflow-wrap:anywhere; }
+        .event.system { color:var(--muted); font-size:13px; }
+        .desc { white-space:pre-wrap; overflow-wrap:anywhere; background:#f9fafb; border:1px solid var(--line); border-radius:8px; padding:10px; }
+        form.row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+        textarea, select { font:inherit; padding:8px; border:1px solid #ccc; border-radius:6px; }
+        textarea { flex:1; min-width:200px; }
+        button.action { padding:8px 14px; border:0; border-radius:6px; background:var(--brand); color:#fff; cursor:pointer; font:inherit; }
+        button.secondary { background:#fff; color:var(--brand); border:1px solid var(--brand); }
+        .note { color:var(--muted); font-size:14px; padding:6px 0; }
+        [hidden] { display:none !important; }
+    </style>
+</head>
+<body>
+<header class="bar">
+    <h1>Support tickets</h1>
+    <nav aria-label="Main"><a href="/">Back to chat</a><span id="who">{{ user.name or user.email or "Signed in" }}</span></nav>
+</header>
+<main>
+    <div>
+        <section aria-labelledby="mine-h">
+            <h2 id="mine-h">My tickets</h2>
+            <ul class="list" id="mine"></ul>
+        </section>
+        <section id="queue-section" aria-labelledby="queue-h" hidden>
+            <h2 id="queue-h">Support queue</h2>
+            <label class="meta" for="queue-filter">Show</label>
+            <select id="queue-filter"><option value="">All</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+            <ul class="list" id="queue"></ul>
+        </section>
+    </div>
+    <section id="detail" aria-live="polite"><p class="note">Select a ticket to see its history.</p></section>
+</main>
+<script nonce="{{ csp_nonce }}">
+"use strict";
+// All ticket text is user-supplied: it is only ever inserted as text.
+const csrf = document.querySelector('meta[name="csrf-token"]').content;
+const isAgent = document.querySelector('meta[name="is-agent"]').content === "yes";
+const $ = (id) => document.getElementById(id);
+let currentId = null;
+
+function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
+async function api(path, options = {}) {
+    const r = await fetch(path, { ...options, headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf } });
+    if (r.status === 401) { window.location.assign("/login?next=/tickets"); throw new Error("signed out"); }
+    return r;
+}
+const when = (iso) => new Date(iso).toLocaleString();
+const label = (s) => s.replace("_", " ");
+
+function renderList(target, tickets, showWho) {
+    target.replaceChildren();
+    if (!tickets.length) { target.appendChild(el("li", "note", "Nothing here.")); return; }
+    for (const t of tickets) {
+        const li = el("li", t.id === currentId ? "active" : "");
+        const b = el("button", "", t.subject); b.type = "button";
+        const st = el("span", "badge " + t.status, label(t.status)); b.appendChild(st);
+        b.appendChild(el("div", "meta", (showWho ? t.requester_name + " · " : "") + when(t.updated_at) + (t.assignee_name ? " · " + t.assignee_name : "")));
+        b.addEventListener("click", () => openTicket(t.id));
+        li.appendChild(b); target.appendChild(li);
+    }
+}
+
+async function refresh() {
+    const mine = await api("/api/tickets");
+    if (mine.ok) renderList($("mine"), (await mine.json()).tickets, false);
+    if (isAgent) {
+        $("queue-section").hidden = false;
+        const q = $("queue-filter").value;
+        const r = await api("/api/agent/tickets" + (q ? "?status=" + q : ""));
+        if (r.ok) renderList($("queue"), (await r.json()).tickets, true);
+    }
+}
+
+async function act(path, body) {
+    const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); window.alert(d.error || "That did not work."); return; }
+    await openTicket(currentId); await refresh();
+}
+
+async function openTicket(id) {
+    const r = await api("/api/tickets/" + id);
+    const box = $("detail");
+    if (!r.ok) { box.replaceChildren(el("p", "note", "That ticket is not available.")); return; }
+    const t = await r.json();
+    currentId = t.id;
+    box.replaceChildren();
+    const h = el("h2", "", t.subject); h.appendChild(el("span", "badge " + t.status, label(t.status)));
+    box.appendChild(h);
+    box.appendChild(el("div", "meta", "Opened by " + t.requester_name + " on " + when(t.created_at) + (t.assignee_name ? " · Assigned to " + t.assignee_name : " · Unassigned")));
+    box.appendChild(el("div", "desc", t.description));
+    for (const e of t.events) {
+        if (e.kind === "created") continue;
+        const who = e.by_requester ? "Requester" : "Support";
+        box.appendChild(el("div", "event " + (e.kind === "comment" ? "" : "system"),
+            e.kind === "comment" ? who + " (" + e.actor_name + "), " + when(e.created_at) + "\n" + e.body : e.actor_name + ": " + e.body + " · " + when(e.created_at)));
+    }
+    if (t.status !== "closed") {
+        const form = el("form", "row");
+        const ta = el("textarea"); ta.rows = 2; ta.maxLength = 2000; ta.placeholder = "Add a comment"; ta.setAttribute("aria-label", "Comment");
+        const send = el("button", "action", "Comment"); send.type = "submit";
+        form.append(ta, send);
+        form.addEventListener("submit", (ev) => { ev.preventDefault(); if (ta.value.trim()) act("/api/tickets/" + id + "/comments", { body: ta.value }); });
+        box.appendChild(form);
+    }
+    const row = el("div", "row"); row.classList.add("row");
+    const addButton = (text, handler, secondary) => { const b = el("button", "action" + (secondary ? " secondary" : ""), text); b.type = "button"; b.addEventListener("click", handler); row.appendChild(b); };
+    if (isAgent) {
+        addButton("Assign to me", () => act("/api/agent/tickets/" + id + "/assign", { assign: true }));
+        if (t.assignee_name) addButton("Unassign", () => act("/api/agent/tickets/" + id + "/assign", { assign: false }), true);
+        const sel = el("select"); sel.setAttribute("aria-label", "Status");
+        for (const s of ["open", "in_progress", "resolved", "closed"]) { const o = el("option", "", label(s)); o.value = s; if (s === t.status) o.selected = true; sel.appendChild(o); }
+        sel.addEventListener("change", () => act("/api/tickets/" + id + "/status", { status: sel.value }));
+        row.appendChild(sel);
+    } else {
+        if (t.status === "resolved") addButton("Reopen", () => act("/api/tickets/" + id + "/status", { status: "open" }), true);
+        if (t.status !== "closed") addButton("Close ticket", () => act("/api/tickets/" + id + "/status", { status: "closed" }), true);
+    }
+    box.appendChild(row);
+}
+
+$("queue-filter").addEventListener("change", refresh);
+const wanted = new URLSearchParams(window.location.search).get("id");
+refresh().then(() => { if (wanted) openTicket(wanted); });
+</script>
+</body>
+</html>

@@ -302,3 +302,61 @@ class Feedback(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+TICKET_STATUSES = ("open", "in_progress", "resolved", "closed")
+TICKET_EVENT_KINDS = ("created", "comment", "status_changed", "assigned")
+
+
+class Ticket(Base):
+    """A support request. Holds only what the requester approved: it has no
+    link to the conversation, the sources or the assistant's text."""
+
+    __tablename__ = "tickets"
+    __table_args__ = (
+        CheckConstraint(_in("status", TICKET_STATUSES), name="ck_tickets_status"),
+        Index("ix_tickets_requester_updated", "requester_id", "updated_at"),
+        Index("ix_tickets_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    requester_id: Mapped[str] = mapped_column(Text)
+    requester_name: Mapped[str] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    assignee_id: Mapped[str | None] = mapped_column(Text)
+    assignee_name: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    events: Mapped[list[TicketEvent]] = relationship(
+        back_populates="ticket", order_by="TicketEvent.id", cascade="all, delete"
+    )
+
+
+class TicketEvent(Base):
+    __tablename__ = "ticket_events"
+    __table_args__ = (
+        CheckConstraint(_in("kind", TICKET_EVENT_KINDS), name="ck_ticket_events_kind"),
+        Index("ix_ticket_events_ticket", "ticket_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tickets.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    actor_id: Mapped[str] = mapped_column(Text)
+    actor_name: Mapped[str] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    ticket: Mapped[Ticket] = relationship(back_populates="events")

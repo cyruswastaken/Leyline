@@ -1,6 +1,6 @@
 # Session handoff
 
-> **Last updated:** 2026-11-10, after Phase 4. Phases 0-3 are committed (Phase 3 as `da9d8a2`). **Phase 4 was handed to the user uncommitted** (they stage and commit); check `git log` / `git status` first to see whether it has landed.
+> **Last updated:** 2026-11-10, after Phase 5. Phases 0-4 are committed (Phase 4 as `32c30e2`). **Phase 5 was handed to the user uncommitted** (they stage and commit); check `git log` / `git status` first to see whether it has landed.
 > **Read order for a new session:** this file → `CLAUDE.md` (rules that must not be weakened; git-ignored, so it may be missing on a fresh clone) → the doc for whatever you touch.
 > This file records *state and next steps*. It deliberately does not repeat the detail in
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/USAGE.md`](docs/USAGE.md),
@@ -51,9 +51,12 @@ Browser (server-rendered Jinja + vanilla JS, strict CSP nonces)
 | 1 | OIDC+PKCE login, Redis sessions, roles, CSRF, CSP nonces, Redis rate limiting, Keycloak realm with demo users, route x persona access matrix | committed |
 | 2 | Postgres + Alembic, validated PDF/DOCX/MD/TXT ingestion, chunker, idempotent uploads, atomic re-versioning, job queue + worker, admin UI, per-document group ACLs, audit trail, 49-doc corpus, seed + migration CLIs | committed, pushed |
 | 3 | Golden set (78 questions) + eval harness + CI gate; migration `0002` (`vector(768)` + HNSW); hybrid search with RRF, relevance floors, doc cap; contract suite; record/replay of real embeddings for offline CI; Ollama + nomic-embed-text | committed (`da9d8a2`) |
-| 4 | `ChatModel` port + resilient adapter (timeouts, retries, circuit breaker, 503 degraded mode); migration `0003` (conversations, messages, feedback); SSE streaming with cancel; verified, re-authorized citations; feedback; follow-up rewriting; token budget; guardrails; rebuilt UI; answer-quality eval | **built, uncommitted** |
+| 5 | Tickets: migration `0004`, `TicketProvider` port + Postgres queue, edit-before-send draft built only from the user's own words, ticket page + agent queue, per-user rate limit, credential scrubbing | **built, uncommitted** |
+| 4 | `ChatModel` port + resilient adapter (timeouts, retries, circuit breaker, 503 degraded mode); migration `0003` (conversations, messages, feedback); SSE streaming with cancel; verified, re-authorized citations; feedback; follow-up rewriting; token budget; guardrails; rebuilt UI; answer-quality eval | committed (`32c30e2`) |
 
 **Phase 3 results** ([`docs/EVALUATION.md`](docs/EVALUATION.md)): recall@5 0.796 -> **1.000**, MRR 0.640 -> **0.936**, recall@1 0.519 -> 0.889, correct refusals 25% -> **83%**, restricted pass 1.000, **0 ACL leaks** (gains confirmed on independent halves of the set).
+
+**Phase 5 verification:** 1065 tests pass (CI mode, 95% coverage), ruff/format/strict mypy clean, `E2E_CHAT=1 E2E_SEMANTIC=1 python scripts/e2e_login.py` passed including the ticket flow (create, privacy, agent queue, assign, comment, resolve, close). Not verified: the tickets page and Contact-support dialog in a browser, mobile layout, screen readers.
 
 **Phase 4 results:** with `qwen2.5:3b`, answer eval ([`docs/EVALUATION.md`](docs/EVALUATION.md)): answered 0.926, cites a source 0.833, cites an expected document 0.778, figures supported 0.981, refusals 1.000, restricted pass 0.917, **0 ACL leaks**. Live checks: real model streamed in the browser; with Ollama stopped `/api/chat/stream` sent a clean `model_unavailable` error event.
 
@@ -63,7 +66,7 @@ Browser (server-rendered Jinja + vanilla JS, strict CSP nonces)
 
 ## 4. Current development status
 
-**Between phases.** Phase 4 is complete and was handed over for the user to commit. Nothing is in progress. Local machine state: Docker stack may be stopped; **Ollama (portable, installed via winget) may still be running in the background** (`Stop-Process -Name ollama` to stop; exe under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ollama.Ollama.Portable_*`); model `nomic-embed-text` is pulled; a git-ignored `.env` exists with only the embedding settings (no secrets). The dev database `leyline` holds the 49 seeded documents with embeddings.
+**Between phases.** Phase 5 is complete and was handed over for the user to commit. Nothing is in progress. Local machine state: Docker stack may be stopped; **Ollama (portable, installed via winget) may still be running in the background** (`Stop-Process -Name ollama` to stop; exe under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ollama.Ollama.Portable_*`); model `nomic-embed-text` is pulled; a git-ignored `.env` exists with only the embedding settings (no secrets). The dev database `leyline` holds the 49 seeded documents with embeddings.
 
 ## 5. Pending tasks
 
@@ -71,7 +74,7 @@ Phase detail and acceptance gates live in [`docs/ROADMAP.md`](docs/ROADMAP.md); 
 
 **Phase-bound**
 - **4** done (see Completed work).
-- **5** Ticket escalation (`TicketProvider` port, built-in queue, agent view).
+- **5** done (see Completed work).
 - **6** OpenTelemetry; append-only audit log; SQL-backed monitoring dashboard; threat model + red-team evals; scanners (pip-audit, gitleaks, Trivy, CodeQL, ZAP); Locust load test.
 - **7** Bicep IaC, managed identity, Entra (incl. group overage via Microsoft Graph), Azure AI Search adapter, deploy pipeline, runbooks/ADRs.
 
@@ -159,13 +162,13 @@ Phase detail and acceptance gates live in [`docs/ROADMAP.md`](docs/ROADMAP.md); 
 ## 9. Next development phases (prioritised)
 
 1. ~~**Phase 4 - chat experience**~~ (done). Original order, for reference: In order: (a) LLM resilience + a configurable chat-model backend (fixes Known issue #1 and unblocks everything else); (b) conversation/message/feedback migration `0003` and persistence; (c) SSE streaming + cancel; (d) structured citations (use `SearchHit.title/heading/chunk_id`) + feedback; (e) guardrails (delimit untrusted context, replace the denylist with scoring/logging, verify citations against retrieved chunks); (f) follow-up query rewriting + token budget; (g) UI rebuild; (h) groundedness/citation evals added to the harness.
-2. **Phase 5 - ticket escalation (next)**, then **Phase 6 - hardening/observability**, then **Phase 7 - Azure** (needs a subscription; confirm budget/access with the user first).
+2. ~~Phase 5 - ticket escalation~~ (done). **Phase 6 - hardening/observability (next)**, then **Phase 7 - Azure** (needs a subscription; confirm budget/access with the user first).
 3. **Cross-cutting, every phase:** update `docs/ROADMAP.md` status, keep `docs/ARCHITECTURE.md` accurate, add allowed-path *and* denied-path tests for anything security-relevant, never lower eval floors, keep the production-grade gates in `docs/ROADMAP.md` in view (zero ACL leaks, >=85% coverage, no secrets, scanner-clean, repeatable deploy).
 
 ## 10. Immediate next step
 
-**Start Phase 5: ticket escalation.** Session start checklist: `git log`/`git status` (has Phase 4 landed?) → start Docker Desktop → `docker compose up -d postgres azurite` → activate `.venv` → `CI=true python -m pytest -q` (expect ~978 passed, ~7 min), `python -m ruff check .`, `python -m mypy`. Start Ollama if needed (see §4; models `nomic-embed-text` and `qwen2.5:3b` are pulled) and `docker compose up -d --build` for the stack (`.env` holds the Ollama embedding and chat settings).
+**Start Phase 6: hardening and observability.** Session start checklist: `git log`/`git status` (has Phase 5 landed?) -> start Docker Desktop -> `docker compose up -d postgres azurite` -> activate `.venv` -> `CI=true python -m pytest -q` (expect ~1065 passed, ~7.5 min), `python -m ruff check .`, `python -m mypy`. Start Ollama if needed (models `nomic-embed-text`, `qwen2.5:3b`) and `docker compose up -d --build`.
 
-Plan (from `docs/ROADMAP.md`): an "Escalate" action that pre-fills a summary the user reviews and edits before sending; a `TicketProvider` port and built-in queue (migration `0004`: tickets, ticket_events); an agent view for `support_agent` (status, assignment, comments); tickets contain **only what the user approved**, so restricted context cannot reach agents who lack access (agents get no document text; citations are titles the *user* could read, re-checked). Every new route needs an access-matrix entry and allowed/denied tests. Ask the user before building if any product choice is open (for example which fields a ticket carries).
+Plan (from `docs/ROADMAP.md`): OpenTelemetry traces/metrics (per-stage latency, tokens, no-answer rate, feedback score; JSON logs to stdout, prompts excluded); an append-only audit log in Postgres replacing the local-file security events and `ast.literal_eval` dashboard (role-gated SQL dashboard; today events still go to `logs/security_events.log`); a written threat model (OWASP LLM Top 10 + STRIDE) and a red-team eval suite (injection, exfiltration, cross-user access); CI security scans (pip-audit, gitleaks, Trivy, CodeQL, ZAP baseline) and a Locust load test against defined latency targets (streaming holds a gunicorn thread per answer: 2 workers x 4 threads). Ask the user which scanners they can run on GitHub before wiring CI, and confirm CI has actually run on GitHub (never observed).
 
-**Done when:** the full flow from an unsatisfying answer to a resolved ticket passes an end-to-end test, and the user has a commit message (they commit).
+**Done when:** the threat model is written, security scans block merges, and load targets are met.

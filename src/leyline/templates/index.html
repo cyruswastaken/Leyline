@@ -106,6 +106,16 @@
         #send-button:disabled { background: #93a8d8; cursor: default; }
         #stop-button { background: var(--danger); }
         [hidden] { display: none !important; }
+        dialog#escalate { border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: min(560px, 94vw); }
+        dialog#escalate::backdrop { background: rgba(0,0,0,.4); }
+        dialog#escalate h2 { margin: 0 0 6px; font-size: 18px; }
+        dialog#escalate p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+        dialog#escalate label { display: block; font-weight: 600; margin: 10px 0 4px; }
+        dialog#escalate input, dialog#escalate textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
+        dialog#escalate .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+        dialog#escalate button { padding: 8px 16px; border-radius: 6px; font: inherit; cursor: pointer; border: 1px solid var(--brand); background: #fff; color: var(--brand); }
+        dialog#escalate button[type="submit"] { background: var(--brand); color: #fff; }
+        #escalate-error { color: var(--danger); font-size: 14px; min-height: 1.2em; }
         .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
         @media (max-width: 760px) {
@@ -129,6 +139,8 @@
         <div class="bar-right">
             {% if "kb_admin" in user.roles %}<a class="nav-link" href="/admin/documents">Documents</a>{% endif %}
             {% if "security_auditor" in user.roles %}<a class="nav-link" href="/monitoring">Monitoring</a>{% endif %}
+            <a class="nav-link" href="/tickets">My tickets</a>
+            <button id="escalate-button" class="ghost" type="button">Contact support</button>
             <span id="user-name">{{ user.name or user.email or "Signed in" }}</span>
             <button id="signout-button" class="ghost" type="button">Sign out</button>
         </div>
@@ -153,6 +165,22 @@
             </form>
         </main>
     </div>
+
+    <dialog id="escalate" aria-labelledby="escalate-title">
+        <form id="escalate-form" method="dialog">
+            <h2 id="escalate-title">Contact support</h2>
+            <p>Support agents will see exactly what is written here, and only this. Nothing from the assistant's answers or its sources is included. Please review and edit it, and leave out passwords.</p>
+            <label for="escalate-subject">Subject</label>
+            <input id="escalate-subject" maxlength="150" required>
+            <label for="escalate-description">Details</label>
+            <textarea id="escalate-description" rows="9" maxlength="5000" required></textarea>
+            <div id="escalate-error" role="alert"></div>
+            <div class="buttons">
+                <button type="button" id="escalate-cancel">Cancel</button>
+                <button type="submit">Send to support</button>
+            </div>
+        </form>
+    </dialog>
 
 <script nonce="{{ csp_nonce }}">
 "use strict";
@@ -476,6 +504,33 @@ $("signout-button").addEventListener("click", async () => {
         const data = await response.json();
         window.location.assign(data.redirect || "/");
     } catch (error) { window.location.assign("/"); }
+});
+
+// --- escalation to support ------------------------------------------------------
+const dialog = $("escalate"), subjectEl = $("escalate-subject"),
+      descriptionEl = $("escalate-description"), errorEl = $("escalate-error");
+$("escalate-button").addEventListener("click", async () => {
+    errorEl.textContent = "";
+    subjectEl.value = ""; descriptionEl.value = "";
+    if (conversationId) {
+        // The draft is built server-side from your own questions only.
+        const response = await api("/api/conversations/" + conversationId + "/escalation-draft", { method: "POST", body: "{}" });
+        if (response.ok) { const draft = await response.json(); subjectEl.value = draft.subject; descriptionEl.value = draft.description; }
+    }
+    dialog.showModal(); subjectEl.focus();
+});
+$("escalate-cancel").addEventListener("click", () => dialog.close());
+$("escalate-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errorEl.textContent = "";
+    const response = await api("/api/tickets", {
+        method: "POST",
+        body: JSON.stringify({ subject: subjectEl.value, description: descriptionEl.value }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { errorEl.textContent = data.error || "Could not create the ticket."; return; }
+    dialog.close();
+    window.location.assign("/tickets?id=" + encodeURIComponent(data.id));
 });
 
 refreshList();

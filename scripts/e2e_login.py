@@ -344,6 +344,64 @@ def main() -> int:
         )
         print("ok  chat feedback, ownership, permissions and refusals")
 
+    # --- ticket escalation (no model needed) ---------------------------------------
+    marker_subject = f"E2E printer {int(time.time())}"
+    created = stack.post(
+        "alice.employee",
+        "/api/tickets",
+        json={"subject": marker_subject, "description": "The printer on 3 is jammed."},
+    )
+    check(created.status_code == 201, f"ticket create returned {created.status_code}")
+    ticket_id = created.json()["id"]
+    check(
+        stack.get_json("sam.security", f"/api/tickets/{ticket_id}").status_code == 404,
+        "another employee could read the ticket",
+    )
+    check(
+        stack.get_json("sam.security", "/api/agent/tickets").status_code == 403,
+        "an employee reached the support queue",
+    )
+    queue = stack.get_json("sue.agent", "/api/agent/tickets?status=open").json()
+    check(
+        ticket_id in {t["id"] for t in queue["tickets"]},
+        "the agent queue does not show the new ticket",
+    )
+    check(
+        stack.post(
+            "sue.agent", f"/api/agent/tickets/{ticket_id}/assign", json={"assign": True}
+        ).status_code
+        == 200,
+        "agent assign failed",
+    )
+    check(
+        stack.post(
+            "sue.agent",
+            f"/api/tickets/{ticket_id}/comments",
+            json={"body": "On my way."},
+        ).status_code
+        == 200,
+        "agent comment failed",
+    )
+    check(
+        stack.post(
+            "sue.agent", f"/api/tickets/{ticket_id}/status", json={"status": "resolved"}
+        ).status_code
+        == 200,
+        "agent resolve failed",
+    )
+    seen = stack.get_json("alice.employee", f"/api/tickets/{ticket_id}").json()
+    check(
+        seen["status"] == "resolved" and seen["assignee_name"],
+        f"requester view is wrong: {seen['status']}",
+    )
+    closed = stack.post(
+        "alice.employee", f"/api/tickets/{ticket_id}/status", json={"status": "closed"}
+    )
+    check(closed.status_code == 200, f"requester close returned {closed.status_code}")
+    print(
+        "ok  ticket flow: create, privacy, agent queue, assign, comment, resolve, close"
+    )
+
     # --- administrators: authorization and validation ----------------------------
     check(
         stack.post("alice.employee", "/api/admin/documents").status_code == 403,

@@ -181,6 +181,14 @@ python -m leyline.app            # the web app
 | `GET` | `/api/conversations` | signed in | Your conversations, newest first |
 | `GET`, `DELETE` | `/api/conversations/<id>` | signed in (+ CSRF) | Messages with citations re-checked against current permissions; delete |
 | `POST` | `/api/messages/<id>/feedback` | signed in + CSRF | Thumbs up/down (`{rating: 1 \| -1, reason?}`) on one of your answers |
+| `GET` | `/tickets` | signed in | Ticket page: your tickets, and the support queue for `support_agent` |
+| `POST` | `/api/conversations/<id>/escalation-draft` | signed in + CSRF | A ticket draft made of your own questions (creates nothing) |
+| `GET`, `POST` | `/api/tickets` | signed in (+ CSRF) | Your tickets; create one (`{subject, description}`) |
+| `GET` | `/api/tickets/<id>` | requester or `support_agent` | Ticket with its history (anyone else: 404) |
+| `POST` | `/api/tickets/<id>/comments` | requester or `support_agent` + CSRF | Add a comment |
+| `POST` | `/api/tickets/<id>/status` | requester or `support_agent` + CSRF | Agents set any status; the requester may close, or reopen a resolved ticket |
+| `GET` | `/api/agent/tickets` | `support_agent` | The queue (`?status=open\|in_progress\|resolved\|closed`) |
+| `POST` | `/api/agent/tickets/<id>/assign` | `support_agent` + CSRF | Assign to yourself (`{assign: false}` to unassign) |
 | `GET` | `/monitoring`, `/monitoring/summary`, `/monitoring/events` | `security_auditor` | Security dashboard and events |
 | `GET` | `/admin/documents` | `kb_admin` | Knowledge-base admin page |
 | `GET`, `POST` | `/api/admin/documents` | `kb_admin` (+ CSRF) | List documents; upload a new one (multipart: `file`, `title`, `groups`) |
@@ -199,6 +207,7 @@ Unauthenticated browser navigation is redirected to `/login`; unauthenticated AP
 - Conversations belong to their owner: another user's conversation or message answers 404, exactly like one that does not exist. `CONVERSATION_RETENTION_DAYS` (default 0 = keep) deletes conversations idle for longer.
 - Answers cite sources as `[1]`, `[2]`; markers pointing at a source that was not retrieved are removed, and a source you can no longer read shows as "Source no longer available" in old conversations.
 - Follow-up questions are rewritten into a standalone search from **your own earlier questions only**; assistant replies are never fed back to the model, because they may quote documents you can no longer read.
+- **Escalating to support:** **Contact support** opens a draft you can edit before sending. The draft is made only of your own questions and the reasons you gave when rating an answer down; it never contains the assistant's text, retrieved text or source titles, because support agents may not be allowed to read those documents. Ticket text is scrubbed of credential-shaped strings, tickets are visible only to their requester and `support_agent`s (anyone else gets 404), and creation is limited to 5 per user per minute (`TICKET_RATE_LIMIT`).
 - Credential-shaped strings (keys, tokens, `password: ...`) are redacted from answers, including when split across stream chunks.
 - If you close the page or press **Stop**, generation is cancelled and the part already written is kept, marked as stopped.
 - Rate limits return HTTP 429: 10 chat requests per user and 120 requests per client IP, per 60 seconds by default.

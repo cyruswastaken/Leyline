@@ -153,6 +153,22 @@ messages are never placed back into a prompt (an ACL may have changed since they
   credential-shaped strings and holds back unfinished words so a secret cannot slip out in halves.
   The model has no tools.
 
+## Ticket escalation
+
+`TicketProvider` (`ports/tickets.py`) is where tickets live; `PostgresTicketProvider` is the built-in
+queue (migration `0004`: `tickets`, `ticket_events`), and ServiceNow or Jira would be further
+implementations. A ticket holds only what the requester approved: a subject, a description and a
+history of comments, status changes and assignments. It has **no link to the conversation, messages
+or sources**, so an agent can never reach restricted context through a ticket. The draft the user
+reviews (`services/escalation.py`) is built from the user's own questions and down-vote reasons only,
+and every submitted text is length-checked and then scrubbed of credential-shaped strings.
+
+Visibility is decided inside the provider as well as by the route decorators: a ticket is visible to
+its requester and to `support_agent`s; for anyone else, an existing ticket and a missing one are both
+`404`. Requesters may comment, close their ticket, or reopen a resolved one; only agents assign,
+resolve or move a ticket to in progress. The agent role is separate from document groups: being an
+agent grants no document access.
+
 ## Sessions
 
 The browser holds only an opaque random 256-bit id in an `HttpOnly`, `SameSite=Lax` cookie (`__Host-` prefixed and `Secure` when `SESSION_COOKIE_SECURE=true`). The principal and CSRF token live in Redis.

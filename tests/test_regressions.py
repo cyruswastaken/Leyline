@@ -86,7 +86,7 @@ def test_monitoring_dashboard_does_not_inject_event_data_as_html():
     assert "${event." not in html
 
 
-@pytest.mark.parametrize("name", ["index.html", "admin_documents.html"])
+@pytest.mark.parametrize("name", ["index.html", "admin_documents.html", "tickets.html"])
 def test_pages_never_build_markup_from_data(name):
     """Chat text, titles and citations come from users and documents: they are
     only ever inserted as text."""

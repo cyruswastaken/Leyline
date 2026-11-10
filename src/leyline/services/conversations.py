@@ -211,6 +211,25 @@ class ConversationService:
             ).all()
         return list(reversed(rows))
 
+    def feedback_reasons(self, owner_id: str, conversation_id: uuid.UUID) -> list[str]:
+        """Reasons the owner gave when rating an answer down in this conversation."""
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(Feedback.reason)
+                .join(Message, Message.id == Feedback.message_id)
+                .join(Conversation, Conversation.id == Message.conversation_id)
+                .where(
+                    Message.conversation_id == conversation_id,
+                    Conversation.owner_id == owner_id,
+                    Conversation.deleted_at.is_(None),
+                    Feedback.user_id == owner_id,
+                    Feedback.rating == -1,
+                    Feedback.reason.is_not(None),
+                )
+                .order_by(Feedback.created_at)
+            ).all()
+        return [r for r in rows if r]
+
     def get(
         self, principal: Principal, conversation_id: uuid.UUID
     ) -> dict[str, Any] | None:
