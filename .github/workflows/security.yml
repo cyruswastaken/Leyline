@@ -98,7 +98,7 @@ jobs:
             zap-baseline.py -t http://127.0.0.1:8000 -I -r report.html
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zap-report
           path: zap/report.html
