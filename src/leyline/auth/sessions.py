@@ -95,7 +95,8 @@ class RedisSessionInterface(SessionInterface):
     # -- loading ---------------------------------------------------------
 
     def open_session(self, app: Flask, request: Request) -> ServerSession:
-        if request.path in self.stateless_paths:
+        # Probes and public static files never need (or touch) the session store.
+        if request.path in self.stateless_paths or request.path.startswith("/static/"):
             return ServerSession()
         sid = request.cookies.get(self.cookie_name)
         if sid and _SID_PATTERN.fullmatch(sid):

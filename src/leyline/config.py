@@ -148,6 +148,11 @@ class Settings(BaseSettings):
     otel_service_name: str = "leyline"
     otel_otlp_endpoint: str | None = None
 
+    # --- Frontend -------------------------------------------------------------
+    # Local development only: serve scripts and styles from the Vite dev server
+    # (for example http://localhost:5173) for hot reload. Rejected in production.
+    frontend_dev_server: str | None = None
+
     # --- Tickets ---------------------------------------------------------------
     ticket_max_subject: int = Field(default=150, gt=0)
     ticket_max_description: int = Field(default=5000, gt=0)
@@ -225,6 +230,8 @@ class Settings(BaseSettings):
         if self.leyline_env == "production":
             if self.flask_debug:
                 raise ValueError("FLASK_DEBUG must be off in production")
+            if self.frontend_dev_server:
+                raise ValueError("FRONTEND_DEV_SERVER must not be set in production")
             if not self.llm_configured:
                 raise ValueError(
                     "LLM_BASE_URL and LLM_MODEL (or AZURE_OPENAI_ENDPOINT, "

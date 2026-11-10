@@ -79,11 +79,11 @@ A document is readable by a principal when its ACL contains one of the principal
 - `can_read` (Python) in `services/authorization.py`
 - `readable_by` (SQL predicate) in the same module, applied inside the search query
 
-If an identity provider omits groups from a token (Entra "overage"), the principal is flagged `groups_incomplete` and simply has no groups, so only `*` documents are readable. Resolving overage through Microsoft Graph is planned for Phase 7.
+If an identity provider omits groups from a token (Entra "overage"), the principal is flagged `groups_incomplete` and simply has no groups, so only `*` documents are readable. Resolving overage through Microsoft Graph is planned for Phase 8.
 
 ### Immediate effect
 
-Because the ACL is queried at search time rather than copied into the index, **changing an ACL or deleting a document applies to the very next question**. Deleting also removes the chunks in the same transaction. Every search hit is additionally re-checked against the database (`authorize_hits`) right before use, which also protects against any future index that lags (Azure AI Search in Phase 7).
+Because the ACL is queried at search time rather than copied into the index, **changing an ACL or deleting a document applies to the very next question**. Deleting also removes the chunks in the same transaction. Every search hit is additionally re-checked against the database (`authorize_hits`) right before use, which also protects against any future index that lags (Azure AI Search in Phase 8).
 
 ### Ingestion
 
@@ -201,7 +201,7 @@ The browser holds only an opaque random 256-bit id in an `HttpOnly`, `SameSite=L
 - **CSRF:** state-changing requests from a signed-in session need an `X-CSRF-Token` header (or `csrf_token` form field) matching the session token, plus a same-origin `Origin` header when one is sent.
 - **CSP:** `default-src 'none'`, scripts and styles only with a fresh per-request nonce, no `unsafe-inline`, `frame-ancestors 'none'`.
 - Also `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, COOP/CORP, `Cache-Control: no-store`, and HSTS when cookies are secure.
-- Event, title and filename data is rendered with `textContent` or auto-escaped templates, never `innerHTML`.
+- Event, title and filename data is rendered with `textContent` or auto-escaped templates, never `innerHTML`; ESLint and tests ban the unsafe sinks, and no page contains inline script or style, so the CSP has no `unsafe-inline` exceptions (scripts and styles come from `/static/dist`, fonts from the same origin).
 
 ## Rate limiting
 
@@ -213,7 +213,8 @@ All code lives in `src/leyline/`.
 
 - `app.py` is the `create_app()` factory and request hooks; `config.py` holds validated settings; `wiring.py` builds the concrete adapters shared by the app and the worker.
 - `auth/` holds the principal, Redis sessions, OIDC setup, CSRF and the access decorators.
-- `web/` contains the Flask blueprints (auth, chat, admin, health, monitoring).
+- `web/` contains the Flask blueprints (auth, chat, tickets, admin, health, monitoring, public landing page).
+- `templates/` (Jinja: one `base.html` layout, a template per page) and `frontend/` (Vite + TypeScript + Tailwind, built into `static/dist/`) make up the interface; `frontend.py` turns the Vite manifest into `<link>` and `<script>` tags. See [FRONTEND.md](FRONTEND.md).
 - `db/` holds the SQLAlchemy models, the engine wrapper and the Alembic migrations.
 - `ports/` defines the interfaces the app depends on (`BlobStore`, `Embedder`, `SearchIndex`); `adapters/` implements them (Azure Blob / Azurite, OpenAI-compatible embeddings, Postgres full-text search, in-memory blobs for tests). Swapping Azure AI Search in later means writing one adapter that passes the same tests.
 - `ingestion/` holds the parsers, chunker, validation, the job queue and the document lifecycle service.

@@ -31,6 +31,24 @@ jobs:
           pip-audit -r requirements.txt --no-deps --disable-pip
           pip-audit -r requirements-dev.txt --no-deps --disable-pip
 
+  frontend-dependencies:
+    name: Frontend dependency audit (npm audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install without running package scripts
+        run: npm ci --ignore-scripts
+      - name: Anything shipped to browsers must be clean
+        run: npm audit --omit=dev
+      - name: Build tooling must have nothing high or critical
+        run: npm audit --audit-level=high
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest

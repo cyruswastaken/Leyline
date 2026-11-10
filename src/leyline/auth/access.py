@@ -12,7 +12,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
-from flask import g, jsonify, redirect, request, session, url_for
+from flask import g, jsonify, redirect, render_template, request, session, url_for
 from flask.typing import ResponseReturnValue
 
 from leyline.auth.principal import AppRole, Principal
@@ -49,7 +49,7 @@ def is_safe_redirect_target(target: str | None) -> bool:
     return not (target.startswith("//") or "\\" in target or "\n" in target)
 
 
-def _wants_html() -> bool:
+def wants_html() -> bool:
     if request.method != "GET":
         return False
     best = request.accept_mimetypes.best_match(["application/json", "text/html"])
@@ -57,11 +57,30 @@ def _wants_html() -> bool:
 
 
 def _unauthenticated() -> ResponseReturnValue:
-    if _wants_html():
+    if wants_html():
+        if request.path == "/":
+            # The front door: signed-out visitors see the landing page first.
+            return redirect(url_for("public.welcome"), code=302)
         return redirect(
             url_for("auth.login", next=request.full_path.rstrip("?")), code=302
         )
     return jsonify({"error": "Authentication required"}), 401
+
+
+def forbidden_response(principal: Principal | None = None) -> ResponseReturnValue:
+    """403 as a styled page for browsers and JSON for API callers."""
+    if wants_html():
+        return (
+            render_template(
+                "error.html",
+                code=403,
+                title="Not allowed",
+                message="Your account does not have access to this page.",
+                user=principal,
+            ),
+            403,
+        )
+    return jsonify({"error": "Forbidden"}), 403
 
 
 def login_required(view: Callable[P, R]) -> Callable[P, Any]:
@@ -95,7 +114,7 @@ def require_roles(*roles: AppRole) -> Callable[[Callable[P, R]], Callable[P, Any
                         "required_any": sorted(role.value for role in allowed),
                     },
                 )
-                return jsonify({"error": "Forbidden"}), 403
+                return forbidden_response(principal)
             return view(*args, **kwargs)
 
         return wrapped

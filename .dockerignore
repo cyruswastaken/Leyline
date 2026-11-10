@@ -18,3 +18,5 @@ tests
 *.md
 !README.md
 compose.yaml
+frontend/node_modules
+src/leyline/static/dist

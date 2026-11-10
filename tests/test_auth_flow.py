@@ -217,6 +217,20 @@ def test_any_sign_in_failure_fails_closed_without_leaking_details(app, events, i
     assert [e["event_type"] for e in events] == ["AUTH_FAILED"]
 
 
+def test_a_failed_sign_in_shows_the_styled_page_with_a_way_to_retry(app):
+    with_idp(app, error=ValueError("bad signature"))
+    client = app.test_client()
+
+    response = client.get("/auth/callback?code=abc&state=fake")
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 400
+    assert "Sign-in failed" in body and 'href="/login">{Try again}</a>' in body
+    # the same layout as every other page: a stylesheet from /static/dist, no inline code
+    assert "<style" not in body and "<script>" not in body
+    assert "bad signature" not in body
+
+
 def test_forged_identity_headers_and_params_are_ignored(app):
     with_idp(app, error=RuntimeError("no valid code"))
     client = app.test_client()

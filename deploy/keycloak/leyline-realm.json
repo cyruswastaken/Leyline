@@ -1,6 +1,10 @@
 {
   "realm": "leyline",
-  "displayName": "Leyline (local development)",
+  "displayName": "Leyline",
+  "loginTheme": "leyline",
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en"],
+  "defaultLocale": "en",
   "enabled": true,
   "sslRequired": "external",
   "registrationAllowed": false,

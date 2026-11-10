@@ -26,6 +26,7 @@ SOME_ID = str(uuid.uuid4())
 POLICY = {
     ("GET", "/healthz"): (PUBLIC, "/healthz"),
     ("GET", "/readyz"): (PUBLIC, "/readyz"),
+    ("GET", "/welcome"): (PUBLIC, "/welcome"),
     ("GET", "/login"): (PUBLIC, "/login"),
     ("GET", "/auth/callback"): (PUBLIC, "/auth/callback"),
     ("GET", "/"): (USER, "/"),
@@ -177,11 +178,19 @@ def test_access_matrix(db_app, persona, method, rule):
         assert response.status_code == 403
 
 
-@pytest.mark.parametrize("path", ["/", "/monitoring", "/admin/documents"])
+@pytest.mark.parametrize("path", ["/monitoring", "/admin/documents", "/tickets"])
 def test_anonymous_browser_navigation_redirects_to_login(client, path):
     response = client.get(path, headers={"Accept": "text/html"})
     assert response.status_code == 302
     assert response.headers["Location"].startswith("/login")
+
+
+def test_the_front_door_sends_signed_out_browsers_to_the_landing_page(client):
+    response = client.get("/", headers={"Accept": "text/html"})
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/welcome"
+    # API callers still get a plain 401, not a redirect
+    assert client.get("/", headers={"Accept": "application/json"}).status_code == 401
 
 
 def test_forbidden_browser_navigation_is_403_not_a_login_loop(client):

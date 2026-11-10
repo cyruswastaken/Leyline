@@ -337,15 +337,15 @@ def test_hostile_titles_and_filenames_come_back_as_plain_json_strings(admin):
     assert doc["latest_version"]["filename"] == "<img onerror=alert(1)>.md"
 
 
-def test_the_admin_page_is_static_and_nonced(admin):
+def test_the_admin_page_has_no_inline_code_and_loads_its_assets_from_static(admin):
     html = admin.get("/admin/documents", headers={"Accept": "text/html"}).get_data(
         as_text=True
     )
-    nonce = re.search(r'<script nonce="([^"]+)">', html).group(1)
-    assert nonce and f'<style nonce="{nonce}">' in html
-    assert not re.search(r"<script(?![^>]*nonce=)[^>]*>", html)
+    assert not re.search(r"<script(?![^>]*src=)[^>]*>", html)  # no inline script
+    assert "<style" not in html and " style=" not in html
     assert " onclick=" not in html and " onsubmit=" not in html
     assert "innerHTML" not in html  # titles and filenames are rendered via textContent
+    assert "Knowledge" in html and 'id="documents"' in html
 
 
 def test_every_admin_action_is_audited_with_the_actor(admin, db, drain):

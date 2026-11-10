@@ -1,5 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
+# ---- frontend stage: compile the UI (Node never reaches the final image) -------
+FROM node:22-slim AS frontend
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+# Tailwind scans the Jinja templates for class names (see @source in main.css).
+COPY src/leyline/templates /src/leyline/templates
+RUN npm run build
+
 # ---- build stage: resolve and build wheels --------------------------------
 FROM python:3.13-slim AS build
 
@@ -14,6 +25,7 @@ RUN python -m venv /opt/venv \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY --from=frontend /src/leyline/static/dist ./src/leyline/static/dist
 RUN /opt/venv/bin/pip install --no-deps .
 
 # ---- rootfs stage: assemble exactly what will ship ----------------------------

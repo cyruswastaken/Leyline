@@ -22,6 +22,19 @@ pip install --no-deps -e .
 pre-commit install
 ```
 
+## Frontend
+
+The interface is built from `frontend/` (Node 22 and npm; see [FRONTEND.md](FRONTEND.md)):
+
+```powershell
+cd frontend
+npm ci
+npm run check      # lint, typecheck, unit tests, build, bundle budget (what CI runs)
+```
+
+`npm run build` writes `src/leyline/static/dist/`, which the app serves and the Docker image builds
+for itself. For a fast loop against the real stack use `compose.frontend.yaml`.
+
 ## Validation
 
 CI (`.github/workflows/ci.yml`) runs the same checks you can run locally:

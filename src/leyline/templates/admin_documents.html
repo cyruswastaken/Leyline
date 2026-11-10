@@ -1,313 +1,48 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Knowledge base administration</title>
-
-    <style nonce="{{ csp_nonce }}">
-        * { box-sizing: border-box; }
-        body { margin: 0; padding: 32px; font-family: Arial, sans-serif; background: #f4f6f8; color: #1f2937; }
-        .page { max-width: 1200px; margin: auto; }
-        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 16px; }
-        h1 { margin: 0; font-size: 24px; }
-        header p { margin: 4px 0 0; color: #6b7280; }
-        a { color: #2563eb; }
-        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-        .card h2 { margin: 0 0 16px; font-size: 18px; }
-        .upload { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 12px; align-items: end; }
-        label { display: block; font-size: 13px; color: #4b5563; margin-bottom: 4px; }
-        input[type=text], input[type=file] { width: 100%; padding: 9px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; background: white; }
-        button { padding: 9px 14px; border: none; border-radius: 8px; background: #2563eb; color: white; cursor: pointer; font-size: 14px; }
-        button:hover { background: #1d4ed8; }
-        button:disabled { background: #94a3b8; cursor: default; }
-        button.secondary { background: #e5e7eb; color: #111827; }
-        button.secondary:hover { background: #d1d5db; }
-        button.danger { background: #b91c1c; }
-        button.danger:hover { background: #991b1b; }
-        .hint { font-size: 12px; color: #6b7280; margin-top: 8px; }
-        #message { margin-top: 12px; font-size: 14px; min-height: 20px; }
-        #message.error { color: #b91c1c; }
-        #message.ok { color: #166534; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; font-size: 14px; }
-        th { color: #6b7280; font-weight: 600; }
-        .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-        .badge.good { background: #dcfce7; color: #166534; }
-        .badge.warn { background: #fef3c7; color: #92400e; }
-        .badge.bad { background: #fee2e2; color: #991b1b; }
-        .badge.muted { background: #e5e7eb; color: #4b5563; }
-        .groups-edit { display: flex; gap: 6px; }
-        .groups-edit input { min-width: 140px; }
-        .actions { display: flex; flex-wrap: wrap; gap: 6px; }
-        .error-text { color: #991b1b; font-size: 12px; margin-top: 6px; max-width: 360px; word-break: break-word; }
-        .meta { color: #6b7280; font-size: 12px; margin-top: 4px; }
-        .empty { color: #6b7280; padding: 16px 0; }
-        .table-wrap { overflow-x: auto; }
-        @media (max-width: 800px) { body { padding: 16px; } .upload { grid-template-columns: 1fr; } }
-    </style>
-</head>
-<body>
-<div class="page">
-    <header>
-        <div>
-            <h1>Knowledge base</h1>
-            <p>Upload documents and choose which groups may read them.</p>
-        </div>
-        <div><a href="/">&larr; Back to chat</a></div>
-    </header>
-
-    <section class="card">
-        <h2>Upload a document</h2>
-        <form id="upload-form" class="upload">
-            <div>
-                <label for="file">File (PDF, DOCX, Markdown or text)</label>
-                <input id="file" type="file" accept=".pdf,.docx,.md,.txt" required>
-            </div>
-            <div>
-                <label for="title">Title</label>
-                <input id="title" type="text" maxlength="200" required>
-            </div>
-            <div>
-                <label for="groups">Groups allowed to read</label>
-                <input id="groups" type="text" placeholder="staff, hr">
-            </div>
-            <button id="upload-button" type="submit">Upload</button>
-        </form>
-        <p class="hint">
-            Use <strong>*</strong> to let every signed-in user read the document. Leave groups empty and
-            nobody can read it. Group names must match the groups in your identity provider.
-        </p>
-        <div id="message" role="status" aria-live="polite"></div>
-    </section>
-
-    <section class="card">
-        <h2>Documents</h2>
-        <div class="table-wrap">
-            <table>
-                <thead>
-                <tr>
-                    <th>Title</th>
-                    <th>Readable by</th>
-                    <th>Status</th>
-                    <th>Version</th>
-                    <th>Actions</th>
-                </tr>
-                </thead>
-                <tbody id="documents"></tbody>
-            </table>
-        </div>
-        <div id="empty" class="empty" hidden>No documents yet.</div>
-    </section>
+{% extends "base.html" %}
+{% set entry = "admin" %}
+{% set active = "knowledge" %}
+{% block title %}Knowledge / Leyline{% endblock %}
+{% block main_class %}mx-auto max-w-6xl px-4 py-10 md:px-8{% endblock %}
+{% block main %}
+<div class="mb-8">
+    <h1 class="display text-4xl sm:text-5xl">Knowledge/</h1>
+    <p class="mt-3 max-w-xl text-muted">Upload documents and choose which groups may read them. Access is checked on every question and takes effect immediately.</p>
 </div>
 
-<script nonce="{{ csp_nonce }}">
-    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
-    const tbody = document.getElementById("documents");
-    const messageBox = document.getElementById("message");
-    let pollTimer = null;
+<section class="card mb-8" aria-labelledby="upload-title">
+    <h2 id="upload-title" class="card-title"><span class="marker">Upload a document</span></h2>
+    <form id="upload-form" class="grid gap-4 md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-end">
+        <label id="dropzone"
+               class="flex min-h-24 cursor-pointer flex-col justify-center gap-1 border border-dashed border-line-strong bg-bg-deep px-4 py-3 text-sm focus-within:border-lime data-active:border-lime data-active:bg-lime/10">
+            <span class="label">File (PDF, DOCX, Markdown or text)</span>
+            <span id="file-name" class="text-text">No file chosen</span>
+            <span class="text-muted">Drop a file here or click to choose</span>
+            <input id="file" class="sr-only" type="file" accept=".pdf,.docx,.md,.txt" required>
+        </label>
+        <div>
+            <label for="title" class="label field-label mt-0">Title</label>
+            <input id="title" class="field" type="text" maxlength="200" required>
+        </div>
+        <div>
+            <label for="groups" class="label field-label mt-0">Groups allowed to read</label>
+            <input id="groups" class="field" type="text" placeholder="staff, hr">
+        </div>
+        <button id="upload-button" class="btn btn-primary" type="submit">{Upload}</button>
+    </form>
+    <p class="mt-3 text-sm text-muted">Use <strong class="text-text">*</strong> to let every signed-in user read the document. Leave groups empty and nobody can read it. Group names must match the groups in your identity provider.</p>
+    <div id="message" class="mt-3 min-h-6 text-sm text-muted" role="status" aria-live="polite"></div>
+</section>
 
-    function say(text, kind) {
-        messageBox.textContent = text || "";
-        messageBox.className = kind || "";
-    }
-
-    async function api(method, url, body) {
-        const options = { method, headers: { "X-CSRF-Token": csrfToken } };
-        if (body instanceof FormData) {
-            options.body = body;
-        } else if (body !== undefined) {
-            options.headers["Content-Type"] = "application/json";
-            options.body = JSON.stringify(body);
-        }
-        const response = await fetch(url, options);
-        if (response.status === 401) {
-            window.location.assign("/login?next=/admin/documents");
-            throw new Error("Signed out");
-        }
-        let data = null;
-        if (response.status !== 204) {
-            try { data = await response.json(); } catch (e) { /* not JSON */ }
-        }
-        if (!response.ok) {
-            throw new Error((data && data.error) || "Request failed (" + response.status + ")");
-        }
-        return data;
-    }
-
-    function el(tag, text, className) {
-        const node = document.createElement(tag);
-        if (text !== undefined && text !== null) node.textContent = text;
-        if (className) node.className = className;
-        return node;
-    }
-
-    function statusOf(doc) {
-        const latest = doc.latest_version;
-        if (!latest) return ["no file", "muted"];
-        const live = doc.current_version;
-        if (latest.status === "failed") return ["failed", "bad"];
-        if (latest.status === "pending") {
-            const retrying = latest.job && latest.job.attempts > 0;
-            return [retrying ? "retrying" : "queued", "warn"];
-        }
-        if (latest.status === "processing") return ["indexing", "warn"];
-        if (live && doc.needs_reindex) return ["needs re-index", "warn"];
-        if (live) return ["indexed", "good"];
-        return [latest.status, "muted"];
-    }
-
-    function needsPolling(documents) {
-        return documents.some((d) => {
-            const s = d.latest_version && d.latest_version.status;
-            return s === "pending" || s === "processing";
-        });
-    }
-
-    function render(documents) {
-        tbody.replaceChildren();
-        document.getElementById("empty").hidden = documents.length > 0;
-
-        for (const doc of documents) {
-            const row = document.createElement("tr");
-
-            const titleCell = el("td");
-            titleCell.append(el("strong", doc.title));
-            if (doc.latest_version) {
-                titleCell.append(el("div", doc.latest_version.filename, "meta"));
-            }
-            row.append(titleCell);
-
-            const groupsCell = el("td");
-            const form = el("form", null, "groups-edit");
-            const input = el("input");
-            input.type = "text";
-            input.value = doc.groups.join(", ");
-            input.setAttribute("aria-label", "Groups allowed to read " + doc.title);
-            const save = el("button", "Save", "secondary");
-            save.type = "submit";
-            form.append(input, save);
-            form.addEventListener("submit", async (event) => {
-                event.preventDefault();
-                try {
-                    const groups = input.value.split(",").map((g) => g.trim()).filter(Boolean);
-                    await api("PUT", "/api/admin/documents/" + doc.id + "/acl", { groups });
-                    say("Access updated for “" + doc.title + "”.", "ok");
-                    await refresh();
-                } catch (error) { say(error.message, "error"); }
-            });
-            groupsCell.append(form);
-            if (doc.groups.length === 0) {
-                groupsCell.append(el("div", "Nobody can read this document.", "meta"));
-            }
-            row.append(groupsCell);
-
-            const [label, tone] = statusOf(doc);
-            const statusCell = el("td");
-            statusCell.append(el("span", label, "badge " + tone));
-            const latest = doc.latest_version;
-            if (latest && latest.error) {
-                statusCell.append(el("div", latest.error, "error-text"));
-            }
-            row.append(statusCell);
-
-            const versionCell = el("td");
-            const live = doc.current_version;
-            versionCell.append(el("div", live ? "v" + live.version + " live" : "not live yet"));
-            if (live) {
-                versionCell.append(el("div", live.chunk_count + " chunks", "meta"));
-            }
-            if (latest && (!live || latest.id !== live.id)) {
-                versionCell.append(el("div", "v" + latest.version + " " + latest.status, "meta"));
-            }
-            row.append(versionCell);
-
-            const actions = el("td", null, "actions");
-
-            const fileInput = el("input");
-            fileInput.type = "file";
-            fileInput.accept = ".pdf,.docx,.md,.txt";
-            fileInput.hidden = true;
-            fileInput.addEventListener("change", async () => {
-                if (!fileInput.files.length) return;
-                const data = new FormData();
-                data.append("file", fileInput.files[0]);
-                try {
-                    const result = await api("POST", "/api/admin/documents/" + doc.id + "/versions", data);
-                    say(result.duplicate ? "That file is already the latest version." : "New version queued.", "ok");
-                    await refresh();
-                } catch (error) { say(error.message, "error"); }
-                fileInput.value = "";
-            });
-            const newVersion = el("button", "New version", "secondary");
-            newVersion.type = "button";
-            newVersion.addEventListener("click", () => fileInput.click());
-
-            const reindex = el("button", "Re-index", "secondary");
-            reindex.type = "button";
-            reindex.addEventListener("click", async () => {
-                try {
-                    const result = await api("POST", "/api/admin/documents/" + doc.id + "/reindex");
-                    say(result.queued ? "Re-index queued." : "Already queued.", "ok");
-                    await refresh();
-                } catch (error) { say(error.message, "error"); }
-            });
-
-            const remove = el("button", "Delete", "danger");
-            remove.type = "button";
-            remove.addEventListener("click", async () => {
-                if (!window.confirm("Delete “" + doc.title + "”? It stops being searchable immediately.")) return;
-                try {
-                    await api("DELETE", "/api/admin/documents/" + doc.id);
-                    say("Deleted.", "ok");
-                    await refresh();
-                } catch (error) { say(error.message, "error"); }
-            });
-
-            actions.append(newVersion, reindex, remove, fileInput);
-            row.append(actions);
-            tbody.append(row);
-        }
-    }
-
-    async function refresh() {
-        clearTimeout(pollTimer);
-        try {
-            const data = await api("GET", "/api/admin/documents");
-            render(data.documents);
-            if (needsPolling(data.documents)) {
-                pollTimer = setTimeout(refresh, 3000);
-            }
-        } catch (error) {
-            say(error.message, "error");
-        }
-    }
-
-    document.getElementById("upload-form").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const button = document.getElementById("upload-button");
-        const file = document.getElementById("file").files[0];
-        if (!file) return;
-        const data = new FormData();
-        data.append("file", file);
-        data.append("title", document.getElementById("title").value);
-        data.append("groups", document.getElementById("groups").value);
-        button.disabled = true;
-        say("Uploading…");
-        try {
-            await api("POST", "/api/admin/documents", data);
-            say("Uploaded. Indexing in the background.", "ok");
-            event.target.reset();
-            await refresh();
-        } catch (error) {
-            say(error.message, "error");
-        } finally {
-            button.disabled = false;
-        }
-    });
-
-    refresh();
-</script>
-</body>
-</html>
+<section class="card" aria-labelledby="documents-title">
+    <h2 id="documents-title" class="card-title"><span class="marker">Documents</span></h2>
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr><th>Title</th><th>Readable by</th><th>Status</th><th>Version</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="documents"></tbody>
+        </table>
+    </div>
+    <div id="empty" class="py-8 text-center text-muted" hidden>No documents yet.</div>
+</section>
+{% endblock %}

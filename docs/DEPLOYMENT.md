@@ -13,7 +13,7 @@ The recommended cloud architecture uses Azure App Service, Microsoft Entra ID, A
 7. Create Azure Database for PostgreSQL (allow-list the `vector` extension), Azure Cache for Redis and the Linux App Service. Run `python -m leyline.db upgrade` once, then deploy the web container and a second instance of the same image running `python -m leyline.worker`.
 8. Send diagnostic logs to Log Analytics and validate the security test matrix.
 
-A step-by-step, infrastructure-as-code deployment replaces the earlier portal walkthrough in Phase 7 of the [roadmap](ROADMAP.md). Nothing below has been deployed yet.
+A step-by-step, infrastructure-as-code deployment replaces the earlier portal walkthrough in Phase 8 of the [roadmap](ROADMAP.md). Nothing below has been deployed yet.
 
 ## Application settings
 
@@ -29,7 +29,7 @@ For the current application code, configure (see [`.env.example`](../.env.exampl
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | Entra app registration (secret to Key Vault) |
 | `OIDC_GROUPS_CLAIM` / `OIDC_ROLES_CLAIM` | Claim names (`groups` / `roles`) |
 | `DATABASE_URL` | `postgresql+pg8000://user:password@host:5432/leyline` (secret; Key Vault) |
-| `BLOB_CONNECTION_STRING` | Storage account connection string (secret). Managed identity replaces it in Phase 7 |
+| `BLOB_CONNECTION_STRING` | Storage account connection string (secret). Managed identity replaces it in Phase 8 |
 | `BLOB_CONTAINER` | Container for original uploads (default `leyline-documents`) |
 | `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_API_KEY` | Optional; any OpenAI-compatible embeddings endpoint (Azure OpenAI v1 API, OpenAI, Ollama) |
 | `REDIS_URL` | `rediss://:<key>@<name>.redis.cache.windows.net:6380/0` |
@@ -38,9 +38,13 @@ For the current application code, configure (see [`.env.example`](../.env.exampl
 
 In production mode the app refuses to start if the model or identity settings are missing, cookies are not secure, or `FLASK_DEBUG` is on. Use `/healthz` as the liveness probe and `/readyz` as the readiness probe (it also checks Redis, the database and its migration level, and blob storage). Run the worker with `WORKER_HEARTBEAT_PATH` set and use a health check that fails if that file goes stale; the compose file shows one.
 
+## Sign-in page branding
+
+The local Keycloak sign-in pages use the repository's `leyline` login theme. With Entra ID the sign-in page is Microsoft's: configure it under Entra admin centre > Company branding (background colour `#0b0c0b`, a logo, the sign-in text) to stay close to the app's look. What it allows (logo, colours, and possibly custom CSS) depends on the tenant's licence and has not been checked here, so the pixel globe and fonts may not carry over.
+
 ## Container
 
-The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI with the full sign-in flow against Keycloak. Entra-specific behavior (group overage, app roles) is not yet tested against a real tenant; that happens in Phase 7.
+The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI with the full sign-in flow against Keycloak. Entra-specific behavior (group overage, app roles) is not yet tested against a real tenant; that happens in Phase 8.
 
 ## Monitoring
 
@@ -63,4 +67,4 @@ Azure OpenAI diagnostic logs may contain metadata rather than prompt and respons
 - Remove test users, groups, deployments, and diagnostic workspaces that are no longer needed.
 - Rotate or revoke all lab keys during teardown.
 
-Teardown will be a single scripted command once the infrastructure code exists (Phase 7).
+Teardown will be a single scripted command once the infrastructure code exists (Phase 8).

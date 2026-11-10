@@ -131,6 +131,8 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./deploy/keycloak/leyline-realm.json:/opt/keycloak/data/import/leyline-realm.json:ro
+      # The sign-in pages in the app's design language (see docs/FRONTEND.md).
+      - ./deploy/keycloak/themes/leyline:/opt/keycloak/themes/leyline:ro
     healthcheck:
       # The image has no curl; probe the readiness endpoint over a raw socket.
       test:

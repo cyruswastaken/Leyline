@@ -88,24 +88,37 @@ def test_csp_uses_a_fresh_nonce_and_no_unsafe_inline(client):
     assert "default-src 'none'" in csp
     assert "frame-ancestors 'none'" in csp
     assert "base-uri 'none'" in csp
+    assert "font-src 'self'" in csp
 
     nonce = re.search(r"script-src 'self' 'nonce-([^']+)'", csp).group(1)
-    html = first.get_data(as_text=True)
-    assert f'<script nonce="{nonce}">' in html
-    assert f'<style nonce="{nonce}">' in html
     other = re.search(
         r"script-src 'self' 'nonce-([^']+)'", second.headers["Content-Security-Policy"]
     ).group(1)
     assert nonce != other
 
 
-def test_no_inline_script_or_style_lacks_a_nonce(client):
-    login_as(client, PERSONAS["auditor"])
-    for path in ("/", "/monitoring"):
-        html = client.get(path, headers={"Accept": "text/html"}).get_data(as_text=True)
-        assert not re.search(r"<script(?![^>]*nonce=)[^>]*>", html), path
-        assert not re.search(r"<style(?![^>]*nonce=)[^>]*>", html), path
-        assert " onclick=" not in html and " style=" not in html
+PAGES = [
+    ("employee", "/"),
+    ("employee", "/tickets"),
+    ("kb_admin", "/admin/documents"),
+    ("auditor", "/monitoring"),
+    (None, "/welcome"),
+    (None, "/no-such-page"),
+]
+
+
+@pytest.mark.parametrize(("persona", "path"), PAGES)
+def test_pages_have_no_inline_script_or_style_at_all(client, persona, path):
+    """All behaviour and styling is in compiled files from /static/dist, so the
+    policy needs no inline exceptions and a page holds none."""
+    if persona:
+        login_as(client, PERSONAS[persona])
+    html = client.get(path, headers={"Accept": "text/html"}).get_data(as_text=True)
+    assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), path
+    assert not re.search(r"<style[^>]*>", html), path
+    assert " onclick=" not in html and " onload=" not in html
+    assert not re.search(r"\sstyle=", html)
+    assert not re.search(r"javascript:", html)
 
 
 @pytest.mark.parametrize("path", ["/healthz", "/me", "/login", "/nope"])

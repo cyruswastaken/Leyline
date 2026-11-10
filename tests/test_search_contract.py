@@ -1,7 +1,7 @@
 """The contract every ``SearchIndex`` implementation must satisfy.
 
 The fixture below is the only place that knows which implementations exist.
-Add a new adapter (Azure AI Search in Phase 7) by adding one entry to
+Add a new adapter (Azure AI Search in Phase 8) by adding one entry to
 ``INDEXES``; it then has to pass the same permission, freshness and ordering
 guarantees as the Postgres implementations.
 

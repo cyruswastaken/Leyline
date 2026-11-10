@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set entry = "landing" %}
+{% block title %}Leyline / Answers from the documents you can see{% endblock %}
+{% block main %}
+<section class="relative overflow-hidden border-b border-line">
+    <div class="mx-auto grid max-w-6xl items-center gap-10 px-4 py-14 md:grid-cols-[1.1fr_1fr] md:px-8 md:py-24">
+        <div>
+            <p class="label marker">Permission-aware IT helpdesk</p>
+            <h1 class="display mt-4 text-6xl sm:text-7xl lg:text-8xl">Leyline/</h1>
+            <p class="mt-6 max-w-lg text-lg text-muted">Answers from the documents you are allowed to see, with the sources shown. When the assistant cannot help, a person can.</p>
+            <div class="mt-8 flex flex-wrap gap-3">
+                <a class="btn btn-primary" href="/login?next=/">{Sign in}</a>
+                <a class="btn btn-quiet" href="#how">{How it works}</a>
+            </div>
+        </div>
+        <canvas id="hero-globe" class="pixelated mx-auto aspect-square w-full max-w-md" aria-hidden="true"></canvas>
+    </div>
+    <canvas id="hero-dither" class="pixelated block h-40 w-full sm:h-52" aria-hidden="true"></canvas>
+</section>
+
+<section id="how" class="mx-auto max-w-6xl px-4 py-16 md:px-8" aria-labelledby="how-title">
+    <h2 id="how-title" class="label marker mb-6">How it works</h2>
+    <div class="grid gap-4 md:grid-cols-3">
+        <article class="card">
+            <h3 class="card-title" data-icon="shield">Permission-aware</h3>
+            <p class="text-muted">Every question is answered only from documents your groups may read. Access changes apply to the very next question, and text you may not see never reaches the model.</p>
+        </article>
+        <article class="card">
+            <h3 class="card-title" data-icon="book">Cited sources</h3>
+            <p class="text-muted">Answers point to the documents they came from, as <span class="font-mono text-lime">{1}</span> chips you can follow. If nothing relevant exists, it says so instead of guessing.</p>
+        </article>
+        <article class="card">
+            <h3 class="card-title" data-icon="ticket">A human when needed</h3>
+            <p class="text-muted">Send an unresolved question to support with one click. You review what is shared, and agents see only what you write.</p>
+        </article>
+    </div>
+    <p class="label mt-10">Demo environment <span class="text-lime">&middot;</span> synthetic data only</p>
+</section>
+{% endblock %}

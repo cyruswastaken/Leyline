@@ -1,0 +1,466 @@
+@import "tailwindcss";
+/* Jinja templates hold utility classes too; tell Tailwind where to look. */
+@source "../../../src/leyline/templates";
+@import "@fontsource/silkscreen/latin-400.css";
+@import "@fontsource/silkscreen/latin-700.css";
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+
+/*
+ * Leyline design system.
+ * Identity: near-black grid, neon lime accent, pixel display type for titles,
+ * small uppercase monospace for interface chrome, a readable sans for anything
+ * people read at length (answers, tickets, tables).
+ * Every text/background pair below is checked for WCAG AA in tokens.test.ts.
+ */
+@theme {
+  --color-bg: #0b0c0b;
+  --color-bg-deep: #070807;
+  --color-panel: #171917;
+  --color-panel-raised: #1e211e;
+  --color-line: #262a26;
+  --color-line-strong: #3a403a;
+  --color-text: #e8ece6;
+  --color-muted: #8f988e;
+  --color-lime: #b6f36a;
+  --color-lime-dim: #8fcc45;
+  --color-lime-ink: #0b0c0b;
+  --color-info: #6bb6ff;
+  --color-warn: #f5c542;
+  --color-danger: #ff7a7a;
+
+  --font-pixel: "Silkscreen", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+
+  --animate-caret: caret 1s steps(1) infinite;
+  @keyframes caret {
+    50% {
+      opacity: 0;
+    }
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background: var(--color-bg);
+  }
+  body {
+    min-height: 100vh;
+    margin: 0;
+    background-color: var(--color-bg);
+    /* the faint 32px grid from the reference */
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-lime);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-lime);
+    color: var(--color-lime-ink);
+  }
+  [hidden] {
+    display: none !important;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+}
+
+@layer components {
+  .skip-link {
+    position: absolute;
+    left: -999px;
+    top: 8px;
+    z-index: 50;
+    padding: 8px 12px;
+    background: var(--color-lime);
+    color: var(--color-lime-ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+  .skip-link:focus {
+    left: 8px;
+  }
+
+  /* --- typography ------------------------------------------------------ */
+  .display {
+    font-family: var(--font-pixel);
+    font-weight: 700;
+    line-height: 0.95;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    -webkit-font-smoothing: none;
+  }
+  .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .marker::after {
+    content: " \00d7\00d7\00d7";
+    color: var(--color-lime);
+    letter-spacing: 0;
+  }
+
+  /* --- chrome ---------------------------------------------------------- */
+  .topbar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--color-line);
+    background: rgb(11 12 11 / 0.85);
+    backdrop-filter: blur(6px);
+  }
+  /* thin lime rule across the very top, as in the reference */
+  .topbar::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: var(--color-lime);
+  }
+  .brand {
+    font-family: var(--font-pixel);
+    font-weight: 700;
+    font-size: 20px;
+    text-transform: uppercase;
+    color: var(--color-text);
+    text-decoration: none;
+    -webkit-font-smoothing: none;
+  }
+  .brand span {
+    color: var(--color-lime);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .nav a {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    text-decoration: none;
+    padding: 4px 0;
+  }
+  .nav a:hover,
+  .nav a[aria-current="page"] {
+    color: var(--color-text);
+  }
+  .nav a[aria-current="page"]::after {
+    content: " \00d7\00d7\00d7";
+    color: var(--color-lime);
+    letter-spacing: 0;
+  }
+
+  @media (max-width: 640px) {
+    .topbar {
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      row-gap: 8px;
+    }
+    /* brand and sign-out share the first row; the nav gets its own below */
+    .nav {
+      order: 3;
+      width: 100%;
+      gap: 20px;
+    }
+  }
+
+  /* --- buttons: braced, mono, square ------------------------------------ */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 6px 16px;
+    border: 1px solid var(--color-lime);
+    background: transparent;
+    color: var(--color-lime);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 120ms,
+      color 120ms;
+  }
+  .btn:hover:not(:disabled) {
+    background: rgb(182 243 106 / 0.12);
+  }
+  .btn:active:not(:disabled) {
+    background: rgb(182 243 106 / 0.22);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .btn-primary {
+    background: var(--color-lime);
+    color: var(--color-lime-ink);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-lime-dim);
+  }
+  .btn-primary:active:not(:disabled) {
+    background: #7bb53a;
+  }
+  .btn-quiet {
+    border-color: var(--color-line-strong);
+    color: var(--color-text);
+  }
+  .btn-quiet:hover:not(:disabled) {
+    border-color: var(--color-muted);
+    background: rgb(255 255 255 / 0.04);
+  }
+  .btn-danger {
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: rgb(255 122 122 / 0.12);
+  }
+  .btn-sm {
+    min-height: 28px;
+    padding: 3px 10px;
+    font-size: 11px;
+  }
+  .btn-icon {
+    min-width: 36px;
+    padding: 6px;
+  }
+
+  /* --- cards, fields, badges -------------------------------------------- */
+  .card {
+    border: 1px solid var(--color-line);
+    background: var(--color-panel);
+    padding: 16px;
+  }
+  .card-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .card-title svg {
+    color: var(--color-lime);
+    flex: none;
+  }
+  .field {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-bg-deep);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: 15px;
+  }
+  .field::placeholder {
+    color: var(--color-muted);
+  }
+  .field:focus {
+    border-color: var(--color-lime);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--color-lime);
+  }
+  .field-label {
+    display: block;
+    margin: 12px 0 6px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border: 1px solid currentColor;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .badge-open {
+    color: var(--color-warn);
+  }
+  .badge-in_progress,
+  .badge-pending,
+  .badge-processing {
+    color: var(--color-info);
+  }
+  .badge-resolved,
+  .badge-indexed {
+    color: var(--color-lime);
+  }
+  .badge-closed,
+  .badge-superseded {
+    color: var(--color-muted);
+  }
+  .badge-failed {
+    color: var(--color-danger);
+  }
+  .chip {
+    display: inline-flex;
+    padding: 0 6px;
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-bg-deep);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text);
+  }
+
+  /* --- tables ------------------------------------------------------------- */
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .table th {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--color-line-strong);
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-line);
+    vertical-align: top;
+  }
+  .table tr:hover td {
+    background: rgb(255 255 255 / 0.02);
+  }
+
+  /* --- reading text (answers, tickets) ------------------------------------ */
+  .prose-answer {
+    overflow-wrap: anywhere;
+  }
+  .prose-answer p {
+    margin: 0 0 0.75em;
+  }
+  .prose-answer p:last-child,
+  .prose-answer ol:last-child,
+  .prose-answer ul:last-child {
+    margin-bottom: 0;
+  }
+  .prose-answer ol,
+  .prose-answer ul {
+    margin: 0 0 0.75em;
+    padding-left: 1.4em;
+  }
+  .prose-answer ol {
+    list-style: decimal;
+  }
+  .prose-answer ul {
+    list-style: square;
+  }
+  .prose-answer li {
+    margin: 0.2em 0;
+  }
+  .prose-answer strong {
+    font-weight: 600;
+    color: #fff;
+  }
+  .prose-answer code {
+    padding: 1px 5px;
+    background: var(--color-bg-deep);
+    border: 1px solid var(--color-line);
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+  }
+  .prose-answer pre {
+    margin: 0 0 0.75em;
+    padding: 12px;
+    overflow-x: auto;
+    background: var(--color-bg-deep);
+    border: 1px solid var(--color-line);
+  }
+  .prose-answer pre code {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  /* a citation reads like the reference's braced text: {1} */
+  .cite {
+    margin: 0 2px;
+    padding: 0 3px;
+    border: 0;
+    background: none;
+    color: var(--color-lime);
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    cursor: pointer;
+  }
+  .cite::before {
+    content: "{";
+  }
+  .cite::after {
+    content: "}";
+  }
+  .cite:hover {
+    background: rgb(182 243 106 / 0.14);
+  }
+  .streaming::after {
+    content: "";
+    display: inline-block;
+    width: 0.55em;
+    height: 1.05em;
+    margin-left: 3px;
+    vertical-align: text-bottom;
+    background: var(--color-lime);
+    animation: var(--animate-caret);
+  }
+
+  .pixelated {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .streaming::after {
+    animation: none;
+  }
+}

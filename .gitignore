@@ -38,3 +38,5 @@ DEVELOPMENT.md
 .idea/
 logs/
 loadtest/results/
+node_modules/
+src/leyline/static/dist/

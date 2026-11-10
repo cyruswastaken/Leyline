@@ -1,0 +1,12 @@
+# Fast loop for working on the UI against the real stack. Usage:
+#   docker compose -f compose.yaml -f compose.frontend.yaml up -d --build app
+#   cd frontend && npm run build      # then: docker compose restart app
+# It mounts the templates and the compiled assets from your checkout over the
+# ones baked into the image, so changing them needs no image rebuild. For hot
+# reload instead, run `npm run dev` and set FRONTEND_DEV_SERVER=http://localhost:5173
+# (local development only; production refuses to start with it set).
+services:
+  app:
+    volumes:
+      - ./src/leyline/templates:/opt/venv/lib/python3.13/site-packages/leyline/templates:ro
+      - ./src/leyline/static:/opt/venv/lib/python3.13/site-packages/leyline/static:ro

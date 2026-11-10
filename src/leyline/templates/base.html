@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    {% if user %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
+    {% if frontend_dev %}<meta property="csp-nonce" nonce="{{ csp_nonce }}">{% endif %}
+    <title>{% block title %}Leyline{% endblock %}</title>
+    {{ vite_assets(entry) }}
+</head>
+<body class="{% block body_class %}min-h-dvh{% endblock %}">
+    <a class="skip-link" href="#main">Skip to content</a>
+    {% block header %}
+    {% if user %}
+    <header class="topbar">
+        <a class="brand" href="/">Leyline<span>/</span></a>
+        <nav class="nav" aria-label="Main">
+            <a href="/"{% if active == "ask" %} aria-current="page"{% endif %}>Ask</a>
+            <a href="/tickets"{% if active == "tickets" %} aria-current="page"{% endif %}>Tickets</a>
+            {% if "kb_admin" in user.roles %}<a href="/admin/documents"{% if active == "knowledge" %} aria-current="page"{% endif %}>Knowledge</a>{% endif %}
+            {% if "security_auditor" in user.roles %}<a href="/monitoring"{% if active == "signals" %} aria-current="page"{% endif %}>Signals</a>{% endif %}
+        </nav>
+        <div class="flex items-center gap-3">
+            <span class="label hidden sm:inline" id="user-name">{{ user.name or user.email or "Signed in" }}</span>
+            <button id="signout-button" class="btn btn-quiet btn-sm" type="button">{Sign out}</button>
+        </div>
+    </header>
+    {% else %}
+    <header class="topbar">
+        <a class="brand" href="/welcome">Leyline<span>/</span></a>
+        <a class="btn btn-primary btn-sm" href="/login?next=/">{Sign in}</a>
+    </header>
+    {% endif %}
+    {% endblock %}
+    <main id="main" class="{% block main_class %}{% endblock %}" {% block main_attrs %}{% endblock %}>
+        {% block main %}{% endblock %}
+    </main>
+</body>
+</html>

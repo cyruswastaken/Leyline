@@ -1,0 +1,16 @@
+<dialog id="escalate" aria-labelledby="escalate-title"
+        class="card m-auto w-[min(34rem,94vw)] border-line-strong p-6 text-text backdrop:bg-black/70">
+    <form id="escalate-form" method="dialog">
+        <h2 id="escalate-title" class="display text-2xl">Support/</h2>
+        <p class="mt-3 text-sm text-muted">Support agents see exactly what is written here, and only this. Nothing from the assistant's answers or its sources is included. Review and edit it, and leave out passwords.</p>
+        <label for="escalate-subject" class="label field-label">Subject</label>
+        <input id="escalate-subject" class="field" maxlength="150" required>
+        <label for="escalate-description" class="label field-label">Details</label>
+        <textarea id="escalate-description" class="field" rows="9" maxlength="5000" required></textarea>
+        <div id="escalate-error" class="min-h-6 pt-2 text-sm text-danger" role="alert"></div>
+        <div class="mt-3 flex justify-end gap-2">
+            <button type="button" id="escalate-cancel" class="btn btn-quiet">{Cancel}</button>
+            <button type="submit" class="btn btn-primary">{Send to support}</button>
+        </div>
+    </form>
+</dialog>

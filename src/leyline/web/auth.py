@@ -10,6 +10,7 @@ from flask import (
     current_app,
     jsonify,
     redirect,
+    render_template,
     request,
     session,
     url_for,
@@ -42,9 +43,18 @@ def _client() -> Any:
 
 
 def _sign_in_failed() -> Response:
+    # Always a browser navigation (the identity provider redirects here), so the
+    # styled error page, like every other page, with a way to start again.
     return Response(
-        "<!doctype html><title>Sign-in failed</title>"
-        '<p>Sign-in failed. <a href="/login">Try again</a>.</p>',
+        render_template(
+            "error.html",
+            code=400,
+            title="Sign-in failed",
+            message="The sign-in could not be completed. Please try again.",
+            user=None,
+            action_href="/login",
+            action_label="Try again",
+        ),
         status=400,
         mimetype="text/html",
     )

@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import time
 
-from flask import Flask, Response, g, jsonify, request, session
+from flask import Flask, Response, g, jsonify, render_template, request, session
 from flask.typing import ResponseReturnValue
 from redis import Redis
 from redis.exceptions import RedisError
+from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from leyline.adapters.tickets_postgres import PostgresTicketProvider
-from leyline.auth.access import current_principal, load_principal
+from leyline.auth.access import current_principal, load_principal, wants_html
 from leyline.auth.csrf import SAFE_METHODS, csrf_failure_reason
 from leyline.auth.oidc import init_oidc
 from leyline.auth.sessions import RedisSessionInterface, ServerSession
@@ -29,6 +30,7 @@ from leyline.extensions import (
     TICKETS_KEY,
     NotConfiguredError,
 )
+from leyline.frontend import vite_assets
 from leyline.ingestion.service import IngestionService
 from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
@@ -49,7 +51,11 @@ from leyline.wiring import (
 )
 
 # Probes must keep working under load and without a session store.
-_RATE_LIMIT_EXEMPT_ENDPOINTS = frozenset({"health.liveness", "health.readiness"})
+# Static files are public and cacheable; counting them would let a few page
+# loads exhaust the per-IP budget.
+_RATE_LIMIT_EXEMPT_ENDPOINTS = frozenset(
+    {"health.liveness", "health.readiness", "static"}
+)
 _STATELESS_PATHS = frozenset({"/healthz", "/readyz"})
 
 
@@ -130,6 +136,10 @@ def create_app(
 
     init_oidc(app, settings)
     init_security_headers(app, settings)
+    # Every template knows who is signed in (explicit render_template arguments
+    # still win), so no page can forget to pass it and show the signed-out header.
+    app.context_processor(lambda: {"user": current_principal()})
+    app.jinja_env.globals["vite_assets"] = lambda entry: vite_assets(settings, entry)
 
     @app.before_request
     def _session_store_guard() -> ResponseReturnValue | None:
@@ -199,13 +209,41 @@ def create_app(
         app.logger.error("%s", exc)
         return jsonify({"error": "Service temporarily unavailable"}), 503
 
+    _ERROR_TITLES = {
+        400: ("Bad request", "That request could not be understood."),
+        403: ("Not allowed", "Your account does not have access to this page."),
+        404: ("Page not found", "There is nothing at this address."),
+        405: ("Not allowed", "That action is not available here."),
+        413: ("Too large", "That request is larger than allowed."),
+        429: ("Slow down", "Too many requests. Please try again in a moment."),
+    }
+
+    @app.errorhandler(HTTPException)
+    def _http_error(exc: HTTPException) -> ResponseReturnValue:
+        code = exc.code or 500
+        title, message = _ERROR_TITLES.get(
+            code, ("Something went wrong", "Please try again in a moment.")
+        )
+        if wants_html():
+            return (
+                render_template(
+                    "error.html",
+                    code=code,
+                    title=title,
+                    message=message,
+                    user=current_principal(),
+                ),
+                code,
+            )
+        return jsonify({"error": title}), code
+
     @app.errorhandler(RedisError)
     def _redis_unavailable(_: RedisError) -> ResponseReturnValue:
         app.logger.error("Redis unavailable")
         g.pop("principal", None)
         return jsonify({"error": "Service temporarily unavailable"}), 503
 
-    from leyline.web import admin, auth, chat, health, monitoring, tickets
+    from leyline.web import admin, auth, chat, health, monitoring, public, tickets
 
     app.register_blueprint(health.bp)
     app.register_blueprint(auth.bp)
@@ -213,6 +251,7 @@ def create_app(
     app.register_blueprint(admin.bp)
     app.register_blueprint(monitoring.bp)
     app.register_blueprint(tickets.bp)
+    app.register_blueprint(public.bp)
 
     return app
 

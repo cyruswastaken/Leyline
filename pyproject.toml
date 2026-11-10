@@ -44,7 +44,14 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-leyline = ["templates/*.html", "db/migrations/*.ini", "db/migrations/*.mako"]
+leyline = [
+    "templates/*.html",
+    "templates/partials/*.html",
+    "db/migrations/*.ini",
+    "db/migrations/*.mako",
+    "static/dist/*.json",
+    "static/dist/assets/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

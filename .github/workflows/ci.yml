@@ -85,10 +85,43 @@ jobs:
           python -m leyline.evals --index hybrid --embeddings evals/embeddings.json \
             --seed --reindex --check evals/thresholds.json
 
+  frontend:
+    name: Frontend (lint, types, tests, build, budget)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint (includes the rules that keep data out of markup)
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Bundle size budget
+        run: npm run budget
+
   docker:
     name: Container build and smoke test
     runs-on: ubuntu-latest
-    needs: quality
+    needs: [quality, frontend]
     steps:
       - uses: actions/checkout@v4
 
@@ -119,9 +152,20 @@ jobs:
           test "$(code -X POST $base/chat)" = "401"
           test "$(code $base/documents)" = "404"
 
-          # browsers are sent to the identity provider with PKCE
+          # signed-out browsers see the landing page; a protected page sends them to sign in
           loc=$(curl -s -o /dev/null -w '%{redirect_url}' -H 'Accept: text/html' $base/)
-          test "$loc" = "$base/login?next=/"
+          test "$loc" = "$base/welcome"
+          test "$(code $base/welcome)" = "200"
+          loc=$(curl -s -o /dev/null -w '%{redirect_url}' -H 'Accept: text/html' $base/tickets)
+          test "$loc" = "$base/login?next=/tickets"
+
+          # the compiled frontend is in the image and served with long-lived caching
+          css=$(curl -s $base/welcome | grep -o '/static/dist/assets/[^"]*css' | head -1)
+          test -n "$css"
+          curl -sI "$base$css" | grep -qi 'cache-control: public, max-age=31536000, immutable'
+          curl -s $base/welcome | grep -q 'hero-globe'
+
+          # browsers are sent to the identity provider with PKCE
           idp=$(curl -s -o /dev/null -w '%{redirect_url}' $base/login)
           echo "$idp" | grep -q 'code_challenge_method=S256'
           echo "$idp" | grep -q 'state='

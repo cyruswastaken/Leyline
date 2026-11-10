@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set entry = "error" %}
+{% block title %}{{ code }} / Leyline{% endblock %}
+{% block main_class %}mx-auto flex max-w-2xl flex-col items-center gap-6 px-4 py-24 text-center{% endblock %}
+{% block main %}
+<canvas id="error-dither" class="pixelated block h-24 w-full max-w-md" aria-hidden="true"></canvas>
+<p class="label marker">Error</p>
+<h1 class="display text-7xl sm:text-8xl">{{ code }}/</h1>
+<h2 class="text-xl font-semibold">{{ title }}</h2>
+<p class="max-w-md text-muted">{{ message }}</p>
+{% if action_href %}
+<a class="btn btn-primary" href="{{ action_href }}">{{ "{" }}{{ action_label }}{{ "}" }}</a>
+{% else %}
+<a class="btn btn-primary" href="{% if user %}/{% else %}/welcome{% endif %}">{% if user %}{Back to chat}{% else %}{Back to start}{% endif %}</a>
+{% endif %}
+{% endblock %}

@@ -56,7 +56,7 @@ Found by reading the code in the initial review (2026-11-09). Items marked **Fix
 - No tests, CI, Dockerfile, migrations, database or IaC. `openai` is unpinned, `python-dotenv` is listed twice.
 - Doc drift: `docs/rag-helpdesk-lab-guide.txt` is referenced throughout but gitignored and not on disk; README says MIT but there is no LICENSE; Python 3.11 in docs, 3.14 on this machine.
 
-**Status:** the corpus is no longer re-read per request (documents are indexed once into Postgres, Phase 2), the rate limiter is now Redis-backed and shared across instances (Phase 1), and the log-file monitoring remains (Phase 6). Dependencies are pinned, tests, CI, a Dockerfile and compose now exist, and docs have been corrected; the missing lab guide is replaced in Phase 7.
+**Status:** the corpus is no longer re-read per request (documents are indexed once into Postgres, Phase 2), the rate limiter is now Redis-backed and shared across instances (Phase 1), and the log-file monitoring remains (Phase 6). Dependencies are pinned, tests, CI, a Dockerfile and compose now exist, and docs have been corrected; the missing lab guide is replaced in Phase 8.
 
 ## Target architecture
 
@@ -123,7 +123,7 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Done when:** a matrix test proves every role against every route, for both allowed and denied paths.
 
-**Phase 1 status: complete.** Delivered as specified, plus: the route matrix fails when a route has no declared policy; sessions have idle and absolute timeouts, rotate at login, and fail closed (503) when Redis is down; CSP uses per-request nonces; and `scripts/e2e_login.py` (run in CI) drives the real login flow against Keycloak for every demo user. Two items moved: per-request re-authorization against the database landed in Phase 2 (it applies *document-side* changes immediately; a user's own group changes still lag until their session ends, which is documented), and Entra group-overage resolution via Microsoft Graph lands in Phase 7.
+**Phase 1 status: complete.** Delivered as specified, plus: the route matrix fails when a route has no declared policy; sessions have idle and absolute timeouts, rotate at login, and fail closed (503) when Redis is down; CSP uses per-request nonces; and `scripts/e2e_login.py` (run in CI) drives the real login flow against Keycloak for every demo user. Two items moved: per-request re-authorization against the database landed in Phase 2 (it applies *document-side* changes immediately; a user's own group changes still lag until their session ends, which is documented), and Entra group-overage resolution via Microsoft Graph lands in Phase 8.
 
 ### Phase 2: Data and ingestion (about 2 weeks)
 - Alembic migrations for `documents`, `document_versions`, `document_acl`, `chunks`, `ingestion_jobs`, `audit_events` (conversation and ticket tables follow in Phases 4 and 5).
@@ -199,7 +199,26 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 - **Dashboard shape:** the page is unchanged; the SQL back end serves the same fields. A richer dashboard (time windows, charts) was not built.
 - **Cost** is not metered (tokens are estimates) and the load test measures the app with a fake model, not model capacity.
 
-### Phase 7: Azure deployment (about 2 weeks, needs a subscription)
+### Phase 7: Frontend design system (about 1.5-2 weeks)
+- A shared design system taken from a reference mock-up: near-black grid, neon lime accent, pixel display type, uppercase monospace chrome, braced `{BUTTONS}`, a pixel-art globe.
+- A real frontend build (Vite, TypeScript, Tailwind) replacing four hand-written pages with inline styles and scripts.
+- Every page on one shared layout: a public landing page, chat, tickets and the agent queue, knowledge-base admin, monitoring, and error pages.
+- Accessibility, mobile layout, reduced-motion support, and a strict CSP that needs no inline exceptions.
+
+**Done when:** all pages use the shared design system with no inline CSS or JavaScript, the frontend checks run in CI, and an automated accessibility audit of every page finds no violations.
+
+**Phase 7 status: complete.** Delivered as specified (see [FRONTEND.md](FRONTEND.md)): `frontend/` (Vite 8, strict TypeScript, Tailwind 4, self-hosted fonts); the `landing`, `chat`, `tickets`, `admin`, `monitoring` and `error` entries on one `base.html`; a procedural pixel globe and 8x8 pixel icons; unit tests for the rendering, streaming and API code; ESLint rules and Python tests that keep data out of markup; a CSP with no inline code; a frontend CI job with a bundle budget, `npm audit` in the security workflow and Dependabot for npm. Choices and differences:
+
+- **Adapted, not copied:** pixel type for titles, monospace for chrome, and a readable sans for answers and tables, so long text stays comfortable.
+- **Dark only,** one theme done well; every text pair is tested against WCAG AA.
+- **Accessibility audit is manual.** axe-core was run in a real browser on the landing, chat, tickets, admin and monitoring pages (zero violations after fixing one real bug: the chat page lost its `h1`). The error page was not audited. It is not in CI; running it there needs a browser test runner.
+- **A bundle budget is enforced** (30 KB JavaScript and 15 KB CSS per page, gzipped); the largest page is about 8 KB of JavaScript.
+- **Signed-out visitors now land on `/welcome`** instead of going straight to the identity provider.
+- **Dithering** (from a second reference): an ordered-dither landscape (`lib/dither.ts`, Bayer 8x8, five colours from the app's tokens) under the landing hero, on the error pages and along the bottom of the sign-in pages. The "Sign-in failed" page is now the styled error page with a `{Try again}` button instead of a bare line of HTML.
+- **The sign-in pages use the same design** through a Keycloak login theme (`deploy/keycloak/themes/leyline`), so the whole local experience is consistent. In Azure the sign-in page is Entra ID's and is branded in the Entra admin centre.
+- **Azure moved to Phase 8.**
+
+### Phase 8: Azure deployment (about 2 weeks, needs a subscription)
 - Bicep modules for App Service (container, web + worker on one plan), Postgres, Redis, Key Vault, Blob, AI Search, Azure OpenAI, Log Analytics, Application Insights.
 - Managed identity everywhere, with no stored keys. Entra app registration and group mapping including overage.
 - Azure AI Search adapter that must pass the Phase 3 contract suite and ACL evals.

@@ -63,7 +63,7 @@ suite is `tests/test_redteam.py` (T-numbers below match its test names).
 - **Event storage is synchronous** and fails open: if the database rejects an event the request continues, an `EVENT_STORE_FAILED` line goes to stdout, and the event is lost from the table. A queue-backed sink is future work.
 - **`security_events` is append-only by trigger.** `TRUNCATE`, a superuser, or table drops bypass it; production must give the application role INSERT and SELECT only.
 - **Support agents see ticket text** in full, including anything a user chose to paste. The draft excludes assistant and document text; it cannot stop a user pasting it.
-- **Azure-specific controls** (managed identity, Key Vault, network rules, Entra group overage) are Phase 7.
+- **Azure-specific controls** (managed identity, Key Vault, network rules, Entra group overage) are Phase 8.
 - Third-party services (Keycloak, Ollama, Azurite) are development stand-ins and were not security tested.
 
 ## How to extend

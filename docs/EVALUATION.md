@@ -146,5 +146,5 @@ down) keeps full keyword recall.
   investigate the regression instead.
 - Tests also prove the gate itself works: with the search's permission filter deliberately
   disabled, the evaluation reports leaks and fails.
-- Another `SearchIndex` implementation (Azure AI Search in Phase 7) is added to the
+- Another `SearchIndex` implementation (Azure AI Search in Phase 8) is added to the
   contract suite in `tests/test_search_contract.py` and measured with the same harness.
