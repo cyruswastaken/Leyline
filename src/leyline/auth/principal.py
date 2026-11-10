@@ -83,14 +83,25 @@ def principal_from_claims(
     *,
     groups_claim: str = "groups",
     roles_claim: str = "roles",
+    group_names: Mapping[str, str] | None = None,
 ) -> Principal:
-    """Build a principal from verified ID-token claims."""
+    """Build a principal from verified ID-token claims.
+
+    ``group_names`` translates the identifiers an identity provider puts in the
+    groups claim into the group names documents use in their ACLs (Entra sends
+    object IDs, not names). When it is given, a group that is not in it is
+    dropped: nobody gains access through a group nobody mapped.
+    """
     subject = claims.get("sub")
     if not isinstance(subject, str) or not subject.strip():
         raise InvalidClaimsError("token has no subject")
 
     claim_names = claims.get("_claim_names")
     overage = isinstance(claim_names, Mapping) and groups_claim in claim_names
+
+    groups = _str_list(claims.get(groups_claim))
+    if group_names:
+        groups = [group_names[g] for g in groups if g in group_names]
 
     return Principal(
         user_id=subject,
@@ -100,7 +111,7 @@ def principal_from_claims(
             or claims.get("email")
         ),
         email=_as_str(claims.get("email")),
-        groups=frozenset(_str_list(claims.get(groups_claim))),
+        groups=frozenset(groups),
         roles=_parse_roles(_str_list(claims.get(roles_claim))),
         groups_incomplete=overage,
     )

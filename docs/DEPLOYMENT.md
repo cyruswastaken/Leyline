@@ -28,7 +28,47 @@ az login
 - **Demo-tier shortcuts:** Postgres and Redis have public endpoints (TLS plus a password or key; Postgres allows only Azure services). A production deployment would use private networking, Entra authentication to Postgres, and managed-identity access to Blob and OpenAI. The worker has no heartbeat probe (Container Apps cannot run an exec probe); the platform restarts it if the process exits.
 - **Models:** the GPT-5 family accepts only its default temperature, so the template sets `LLM_SEND_TEMPERATURE=false` and a 55 second timeout.
 - **Cost:** about $35-45 a month while running (Postgres B1ms, Managed Redis B0 at $0.019/hour, registry, Container Apps, logs); model calls cost cents for a demo. Estimates, not a price-sheet check. With a student credit, deploy for demos and tear down.
+- **Deployed (2026-11-10):** live at `https://leyline-web.<generated>.koreacentral.azurecontainerapps.io`. `/readyz` reports `ready` with every check true (database, schema, blob storage, Redis, model, sign-in, embeddings). `./infra/logs.ps1 [-App web|worker|leyline-task] [-Errors] [-System]` reads container logs without any CLI extension.
+- **Corpus:** `./infra/deploy.ps1 -Seed` (or `az containerapp job start --name leyline-seed --resource-group rg-leyline-app`) queues the sample documents; the worker indexes them. The first load created 49 documents and all 49 were indexed with `text-embedding-3-small`. Relevance floors are still the ones calibrated for `nomic-embed-text` and must be re-swept for this model (`python -m leyline.evals --index hybrid --sweep` with embeddings re-recorded).
+- **Lessons from the first real deploy** (each is now guarded by a test): (1) the OpenAI key must be read after the model deployments finish (`RequestConflict` otherwise); (2) this subscription creates new Container Apps environments as **express** unless `environmentMode: 'WorkloadProfiles'` is set, and express has no Key Vault references or jobs; (3) production validation runs in every process, so the worker and job need `SESSION_COOKIE_SECURE` too (all containers share one environment block); (4) `?ssl_context=true` in `DATABASE_URL` must be turned into a real TLS setting (done in `Database`); (5) `az containerapp job start --args` splits badly on `-m`, so the job's own command is the migration. `what-if` and `validate` caught none of these.
 - **Checked:** the templates compile without warnings (`tests/test_infra.py` compiles them when the Bicep compiler is installed) and pass `az deployment sub what-if` and `validate` on the subscription. A real deploy has not been run.
+
+## Budget alert (`infra/budget.ps1`)
+
+```powershell
+./infra/budget.ps1 -Email you@example.com -Amount 4000    # monthly, in your billing currency (INR)
+./infra/budget.ps1 -Remove
+```
+
+Emails at 50%, 80% and 100% of the amount actually spent, and when Azure forecasts 100%. **It only
+alerts; it never stops anything**, so tear the environment down when you are not using it. The
+address is a parameter and is not stored in the repository. The budget `leyline-monthly` (4000 INR)
+exists on the Azure for Students subscription and was read back to confirm all four alerts.
+
+## Sign-in with Microsoft Entra ID (`infra/entra.ps1`)
+
+```powershell
+./infra/entra.ps1 -WhatIf                       # preview: changes nothing
+./infra/entra.ps1 -AssignMe                     # app, roles, groups, secret; gives you all four roles
+./infra/entra.ps1 -RedirectUri https://leyline-web.<domain>/auth/callback   # after pass 1 of deploy
+./infra/entra.ps1 -DemoUsers                    # optional: seven demo users like the Keycloak ones
+./infra/entra.ps1 -Remove                       # deletes all of it again
+```
+
+- **Created:** an app registration `Leyline Helpdesk` (this tenant only) with a service principal that
+  **requires assignment** (an unassigned person in the directory cannot sign in), the four app roles
+  (`user`, `kb_admin`, `support_agent`, `security_auditor`, carried in the `roles` claim) and four security
+  groups (`Leyline staff`, `security`, `hr`, `finance`). An older registration named `Leyline` (from the first
+  lab) is deliberately left alone.
+- **Groups to document access:** Entra's `groups` claim carries group object ids, not names, and the free
+  tier cannot send names. The script saves the id-to-name map; `deploy.ps1` passes it as `OIDC_GROUP_NAMES`
+  and the app translates ids to the names documents use. With a map configured, a group that is not in it
+  grants nothing, and a token entry that merely spells `hr` is ignored. Overage (more than 200 groups) still
+  fails closed.
+- **The client secret** is created for 180 days and stored encrypted for your Windows account in
+  `infra/.entra.local.json` (git-ignored); it is never printed, and `deploy.ps1` reads it from there. Demo user
+  passwords (only with `-DemoUsers`) go to `infra/.entra-demo-users.local.txt` (git-ignored), never to the screen.
+- **Verified:** a real sign-in through Entra works (the owner account, with all four roles). **Not verified yet:** the groups claim and `OIDC_GROUP_NAMES` mapping with demo users (needs `-DemoUsers` and the corpus), and company branding on the free tier.
 
 ## Original manual sequence (for reference)
 
@@ -97,4 +137,4 @@ Azure OpenAI diagnostic logs may contain metadata rather than prompt and respons
 - Remove test users, groups, deployments, and diagnostic workspaces that are no longer needed.
 - Rotate or revoke all lab keys during teardown.
 
-Teardown is `./infra/teardown.ps1` (deletes `rg-leyline-app`, purges the Key Vault, keeps the Azure OpenAI account; `-IncludeModels` also removes the model deployments). It does not remove the Entra app registration or test users.
+Set a budget first (`./infra/budget.ps1`). Teardown is `./infra/teardown.ps1` (deletes `rg-leyline-app`, purges the Key Vault, keeps the Azure OpenAI account; `-IncludeModels` also removes the model deployments). It does not remove the Entra app registration or test users.

@@ -43,6 +43,8 @@ param oidcClientId string = ''
 param oidcTenantId string = ''
 @secure()
 param oidcClientSecret string = ''
+@description('JSON object mapping Entra group object ids to the group names documents use, from infra/entra.ps1. Object ids are identifiers, not secrets.')
+param oidcGroupNames string = '{}'
 
 @description('Keep one web replica running (true) or let it scale to zero when idle (false, cheaper but the first request is slow).')
 param webAlwaysOn bool = true
@@ -95,6 +97,14 @@ module openai 'modules/openai.bicep' = {
   }
 }
 
+// A separate step that waits for both deployments, then reads the key.
+module openaiKey 'modules/openai-key.bicep' = {
+  scope: resourceGroup(openAiResourceGroupName)
+  name: 'openai-key'
+  params: { accountName: openAiAccountName }
+  dependsOn: [openai]
+}
+
 module secrets 'modules/secrets.bicep' = {
   scope: appRg
   name: 'secrets'
@@ -104,7 +114,7 @@ module secrets 'modules/secrets.bicep' = {
     redisName: data.outputs.redisName
     postgresHost: data.outputs.postgresHost
     postgresAdminPassword: postgresAdminPassword
-    openAiKey: openai.outputs.apiKey
+    openAiKey: openaiKey.outputs.apiKey
     oidcClientSecret: oidcClientSecret
     includeOidcSecret: deployApps
   }
@@ -126,6 +136,7 @@ module apps 'modules/apps.bicep' = {
     chatDeployment: openai.outputs.chatDeployment
     embeddingDeployment: openai.outputs.embeddingDeployment
     oidcClientId: oidcClientId
+    oidcGroupNames: oidcGroupNames
     oidcMetadataUrl: '${environment().authentication.loginEndpoint}${oidcTenantId}/v2.0/.well-known/openid-configuration'
     webAlwaysOn: webAlwaysOn
   }

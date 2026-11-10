@@ -26,6 +26,58 @@ def test_principal_from_claims_maps_identity_groups_and_roles():
     assert principal.roles == {AppRole.USER, AppRole.SECURITY_AUDITOR}
 
 
+ENTRA_IDS = {
+    "11111111-1111-1111-1111-111111111111": "staff",
+    "22222222-2222-2222-2222-222222222222": "hr",
+}
+
+
+def test_entra_group_ids_become_the_group_names_documents_use():
+    principal = principal_from_claims(
+        {"sub": "u", "groups": list(ENTRA_IDS)}, group_names=ENTRA_IDS
+    )
+    assert principal.groups == {"staff", "hr"}
+
+
+def test_a_group_nobody_mapped_grants_nothing_when_a_map_is_configured():
+    principal = principal_from_claims(
+        {"sub": "u", "groups": ["33333333-3333-3333-3333-333333333333"]},
+        group_names=ENTRA_IDS,
+    )
+    assert principal.groups == frozenset()
+
+
+def test_a_group_literally_named_like_an_acl_group_is_not_trusted_through_the_map():
+    # With a map configured only identifiers in the map count, so a token entry that
+    # merely spells "hr" (or "staff") cannot stand in for the mapped group.
+    principal = principal_from_claims(
+        {"sub": "u", "groups": ["hr", "staff"]}, group_names=ENTRA_IDS
+    )
+    assert principal.groups == frozenset()
+
+
+def test_without_a_map_group_names_pass_through_as_before():
+    principal = principal_from_claims({"sub": "u", "groups": ["hr"]})
+    assert principal.groups == {"hr"}
+    assert principal_from_claims(
+        {"sub": "u", "groups": ["hr"]}, group_names={}
+    ).groups == {"hr"}
+
+
+def test_overage_is_still_flagged_and_fails_closed_with_a_map():
+    principal = principal_from_claims(
+        {"sub": "u", "_claim_names": {"groups": "src1"}}, group_names=ENTRA_IDS
+    )
+    assert principal.groups_incomplete is True and principal.groups == frozenset()
+
+
+def test_the_group_map_is_read_from_a_json_environment_variable(monkeypatch):
+    from leyline.config import Settings
+
+    monkeypatch.setenv("OIDC_GROUP_NAMES", '{"abc": "hr"}')
+    assert Settings(_env_file=None).oidc_group_names == {"abc": "hr"}  # type: ignore[call-arg]
+
+
 def test_everyone_is_a_plain_user_and_unknown_roles_grant_nothing():
     principal = principal_from_claims(
         {"sub": "x", "roles": ["root", "kb_admin_extra", "KB_ADMIN"]}

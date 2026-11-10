@@ -1,7 +1,12 @@
-// Container Apps: the environment (always created, so its address is known before the
-// sign-in redirect is registered), then the web app, the ingestion worker and a manual
-// task job (migrations and corpus seeding) when deployApps is true. All three run the
-// same image.
+// Container Apps: the environment, the web app, the ingestion worker and a manual task
+// job (migrations and corpus seeding). All three run the same image.
+//
+// Nothing here is created until deployApps is true.
+//
+// The environment mode is set explicitly. On this subscription Azure creates new
+// environments in the "express" tier when none is requested, and express has no Key Vault
+// secret references and no jobs (both are used here). 'WorkloadProfiles' is the standard
+// tier (the Consumption profile below). The property needs an API version that has it.
 param location string
 param tags object
 param deployApps bool
@@ -14,6 +19,7 @@ param openAiEndpoint string
 param chatDeployment string
 param embeddingDeployment string
 param oidcClientId string
+param oidcGroupNames string
 param oidcMetadataUrl string
 param webAlwaysOn bool
 
@@ -21,11 +27,12 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: logAnalyticsName
 }
 
-resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
+resource environment 'Microsoft.App/managedEnvironments@2026-07-01' = if (deployApps) {
   name: 'cae-leyline'
   location: location
   tags: tags
   properties: {
+    environmentMode: 'WorkloadProfiles'
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
@@ -72,8 +79,14 @@ var secrets = [
 
 var llmBaseUrl = '${openAiEndpoint}openai/v1/'
 
+// Shared by the web app, the worker and the task job: production mode validates the
+// whole configuration in every process that loads settings (a worker without
+// SESSION_COOKIE_SECURE refuses to start), so nothing required may be web-only.
 var commonEnv = [
   { name: 'LEYLINE_ENV', value: 'production' }
+  { name: 'SESSION_COOKIE_SECURE', value: 'true' }
+  // Container Apps ingress is the one proxy in front of the app.
+  { name: 'TRUSTED_PROXY_COUNT', value: '1' }
   { name: 'DATABASE_URL', secretRef: 'database-url' }
   { name: 'BLOB_CONNECTION_STRING', secretRef: 'blob-connection-string' }
   { name: 'REDIS_URL', secretRef: 'redis-url' }
@@ -90,14 +103,9 @@ var commonEnv = [
   { name: 'EMBEDDING_SEND_DIMENSIONS', value: 'true' }
   { name: 'OIDC_METADATA_URL', value: oidcMetadataUrl }
   { name: 'OIDC_CLIENT_ID', value: oidcClientId }
+  { name: 'OIDC_GROUP_NAMES', value: oidcGroupNames }
   { name: 'OIDC_CLIENT_SECRET', secretRef: 'oidc-client-secret' }
 ]
-
-var webEnv = concat(commonEnv, [
-  { name: 'SESSION_COOKIE_SECURE', value: 'true' }
-  // Container Apps ingress is the one proxy in front of the app.
-  { name: 'TRUSTED_PROXY_COUNT', value: '1' }
-])
 
 resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
   name: 'leyline-web'
@@ -105,7 +113,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
   tags: tags
   identity: identity
   properties: {
-    managedEnvironmentId: environment.id
+    managedEnvironmentId: environment!.id
     workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
@@ -124,7 +132,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
           name: 'web'
           image: appImage
           resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: webEnv
+          env: commonEnv
           probes: [
             {
               type: 'Liveness'
@@ -164,7 +172,7 @@ resource worker 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
   tags: tags
   identity: identity
   properties: {
-    managedEnvironmentId: environment.id
+    managedEnvironmentId: environment!.id
     workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
@@ -193,7 +201,7 @@ resource tasks 'Microsoft.App/jobs@2024-03-01' = if (deployApps) {
   tags: tags
   identity: identity
   properties: {
-    environmentId: environment.id
+    environmentId: environment!.id
     workloadProfileName: 'Consumption'
     configuration: {
       triggerType: 'Manual'
@@ -217,5 +225,39 @@ resource tasks 'Microsoft.App/jobs@2024-03-01' = if (deployApps) {
   }
 }
 
-output defaultDomain string = environment.properties.defaultDomain
+// Loads the sample corpus through the normal ingestion path (documents are queued; the
+// worker indexes them). Its own command is the seed, because `az containerapp job start
+// --args` splits '-m leyline.seed' into one bad argument. Safe to run again: unchanged
+// files are skipped. Start with: az containerapp job start -n leyline-seed -g <group>
+resource seed 'Microsoft.App/jobs@2024-03-01' = if (deployApps) {
+  name: 'leyline-seed'
+  location: location
+  tags: tags
+  identity: identity
+  properties: {
+    environmentId: environment!.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 900
+      replicaRetryLimit: 0
+      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+      registries: registries
+      secrets: secrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'seed'
+          image: appImage
+          command: ['python', '-m', 'leyline.seed']
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+          env: commonEnv
+        }
+      ]
+    }
+  }
+}
+
+output defaultDomain string = deployApps ? environment!.properties.defaultDomain : ''
 output webUrl string = deployApps ? 'https://${web!.properties.configuration.ingress.fqdn}' : ''

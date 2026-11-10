@@ -1,7 +1,7 @@
 // Model deployments on the Azure OpenAI account that already exists in rg-leyline.
-// Only deployments are added; the account itself is left as it is. The key leaves this
-// module as a secure output and goes straight into Key Vault (see secrets.bicep), so it
-// is never written to a template, a parameter file or the deployment history.
+// Only deployments are added; the account itself is left as it is. The key is read in a
+// separate module afterwards (openai-key.bicep): asking for it while deployments are being
+// written makes Azure answer RequestConflict.
 param accountName string
 param chatModel string
 param chatModelVersion string
@@ -54,5 +54,3 @@ resource embeddings 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01
 output endpoint string = account.properties.endpoint
 output chatDeployment string = chat.name
 output embeddingDeployment string = embeddings.name
-@secure()
-output apiKey string = account.listKeys().key1

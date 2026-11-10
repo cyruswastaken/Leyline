@@ -110,30 +110,38 @@ def test_the_app_environment_sets_only_settings_the_code_understands():
     assert names <= known, f"unknown settings: {sorted(names - known)}"
 
 
-def test_the_production_environment_satisfies_production_validation(monkeypatch):
-    """The settings the template injects must pass the app's own production checks."""
-    env = {
-        "LEYLINE_ENV": "production",
+def test_every_container_gets_the_settings_production_validation_requires(monkeypatch):
+    """The web app, the worker and both jobs all load settings in production mode, so
+    each must carry the required ones (a worker without SESSION_COOKIE_SECURE crash-loops)."""
+    apps = read(MODULES / "apps.bicep")
+    common = apps.split("var commonEnv = [", 1)[1].split("resource web", 1)[0]
+    declared = dict(
+        re.findall(r"name: '([A-Z0-9_]+)', (?:value: '([^']*)'|secretRef)", common)
+    )
+    names = set(re.findall(r"name: '([A-Z0-9_]+)'", common))
+    # no container gets a private environment: all three use commonEnv and nothing else
+    assert apps.count("env: commonEnv") == 4  # web, worker, task job, seed job
+    assert "webEnv" not in apps
+    # build a production configuration from exactly what the template injects
+    placeholders = {
         "DATABASE_URL": "postgresql+pg8000://u:p@h:5432/leyline?ssl_context=true",
         "BLOB_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=a;AccountKey=k",
         "REDIS_URL": "rediss://:k@h:10000/0",
         "LLM_BASE_URL": "https://example.openai.azure.com/openai/v1/",
         "LLM_MODEL": "gpt-5.4-mini",
         "LLM_API_KEY": "k",
-        "LLM_SEND_TEMPERATURE": "false",
         "EMBEDDING_BASE_URL": "https://example.openai.azure.com/openai/v1/",
         "EMBEDDING_MODEL": "text-embedding-3-small",
         "EMBEDDING_API_KEY": "k",
-        "EMBEDDING_SEND_DIMENSIONS": "true",
         "OIDC_METADATA_URL": "https://login.microsoftonline.com/t/v2.0/.well-known/openid-configuration",
         "OIDC_CLIENT_ID": "id",
+        "OIDC_GROUP_NAMES": "{}",
         "OIDC_CLIENT_SECRET": "s",
-        "SESSION_COOKIE_SECURE": "true",
-        "TRUSTED_PROXY_COUNT": "1",
     }
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    for name in names:
+        monkeypatch.setenv(name, declared.get(name) or placeholders[name])
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]  # raises if anything required is missing
+    assert settings.session_cookie_secure is True
     assert settings.llm_send_temperature is False
     assert settings.embedding_send_dimensions is True
     assert settings.embeddings_configured
@@ -161,3 +169,134 @@ def test_every_template_compiles_without_warnings():
     )
     assert result.returncode == 0, result.stderr
     assert "Warning" not in result.stderr, result.stderr
+
+
+# --- Entra registration (infra/entra.ps1) ----------------------------------------------------
+
+
+def test_the_entra_script_never_prints_or_stores_the_client_secret_in_plain_text():
+    script = read(INFRA / "entra.ps1")
+    assert "ConvertFrom-SecureString" in script  # encrypted for the Windows account
+    assert not re.search(r"Write-Host[^\n]*secretText", script)
+    assert not re.search(r"Write-Host[^\n]*clientSecret", script)
+
+
+def test_entra_local_files_are_git_ignored():
+    ignore = read(ROOT / ".gitignore")
+    assert "infra/.entra.local.json" in ignore
+    assert "infra/.entra-demo-users.local.txt" in ignore
+
+
+def test_the_entra_script_leaves_the_older_leyline_registration_alone():
+    script = read(INFRA / "entra.ps1")
+    assert "[string]$AppName = 'Leyline Helpdesk'" in script
+
+
+def test_the_entra_roles_are_exactly_the_apps_roles_with_fixed_ids():
+    from leyline.auth.principal import AppRole
+
+    script = read(INFRA / "entra.ps1")
+    declared = re.findall(
+        r"id = '([0-9a-f-]{36})'; value = '(\w+)'", script, re.IGNORECASE
+    )
+    assert sorted(value for _, value in declared) == sorted(r.value for r in AppRole)
+    assert len({guid for guid, _ in declared}) == len(declared)  # ids are unique
+
+
+def test_only_assigned_users_may_sign_in_and_roles_cannot_be_invented_by_users():
+    script = read(INFRA / "entra.ps1")
+    assert "appRoleAssignmentRequired = $true" in script
+    assert "signInAudience         = 'AzureADMyOrg'" in script  # this tenant only
+
+
+def test_the_document_groups_match_the_demo_corpus_groups():
+    script = read(INFRA / "entra.ps1")
+    declared = re.search(r"\$groupNames = @\(([^)]*)\)", script)
+    assert declared
+    names = set(re.findall(r"'(\w+)'", declared.group(1)))
+    corpus_groups: set[str] = set()
+    for document in (ROOT / "corpus").rglob("*.md"):
+        match = re.search(r"^Groups:\s*(.+)$", read(document), re.MULTILINE)
+        if match:
+            corpus_groups |= {g.strip() for g in match.group(1).split(",")}
+    corpus_groups -= {"everyone", "*"}
+    assert corpus_groups <= names, sorted(corpus_groups - names)
+
+
+def test_deploy_uses_the_saved_entra_values_and_passes_the_group_map():
+    script = read(INFRA / "deploy.ps1")
+    assert (
+        ".entra.local.json" in script
+        and "ConvertTo-SecureString $saved.clientSecret" in script
+    )
+    assert "$second.oidcGroupNames = $oidcGroupNames" in script
+    assert "OIDC_GROUP_NAMES" in read(MODULES / "apps.bicep")
+
+
+def test_the_budget_script_keeps_the_email_out_of_the_repository_and_only_alerts():
+    script = read(INFRA / "budget.ps1")
+    assert "[string]$Email" in script  # supplied by the caller, not stored
+    assert not re.search(
+        r"[\w.+-]+@(gmail|outlook|hotmail)\.com", script, re.IGNORECASE
+    )
+    for percent in ("50", "80", "100"):
+        assert f"New-Alert {percent} 'Actual'" in script
+    assert "New-Alert 100 'Forecasted'" in script
+    assert "-WhatIf:$false" in script  # a preview must still delete its temp file
+
+
+def test_the_openai_key_is_read_after_the_deployments_in_its_own_module():
+    # Reading the key while deployments are being written fails with RequestConflict.
+    assert "listKeys" not in read(MODULES / "openai.bicep")
+    assert "listKeys" in read(MODULES / "openai-key.bicep")
+    main = read(INFRA / "main.bicep")
+    block = main.split("module openaiKey", 1)[1].split("module secrets", 1)[0]
+    assert "dependsOn: [openai]" in block
+
+
+def test_the_environment_asks_for_the_standard_mode_not_express():
+    # Without it this subscription creates an "express" environment, which has no Key Vault
+    # secret references and no jobs; the apps need both.
+    apps = read(MODULES / "apps.bicep")
+    assert "environmentMode: 'WorkloadProfiles'" in apps
+    assert (
+        "'Express'"
+        not in apps.split("resource environment", 1)[1].split("var identity", 1)[0]
+    )
+    assert re.search(
+        r"managedEnvironments@(\d{4}-\d\d-\d\d)' = if \(deployApps\)", apps
+    )
+
+
+def test_pass_two_registers_the_sign_in_address_it_just_created():
+    deploy = read(INFRA / "deploy.ps1")
+    assert "entra.ps1" in deploy and "-RedirectUri $redirect" in deploy
+
+
+def test_the_migration_job_runs_its_own_command_without_overrides():
+    # az splits `--args '-m leyline.db upgrade'` into one bad argument, so the job's own
+    # command (see apps.bicep) is the migration and the script overrides nothing.
+    deploy = read(INFRA / "deploy.ps1")
+    assert "job start --name leyline-task" in deploy
+    assert "--args" not in deploy.split("job start", 1)[1].split("\n", 1)[0]
+    assert "'leyline.db', 'upgrade'" in read(MODULES / "apps.bicep")
+
+
+def test_the_logs_script_needs_no_cli_extension_and_validates_its_input():
+    script = read(INFRA / "logs.ps1")
+    assert "api.loganalytics.io" in script
+    assert "containerapp job logs" not in script  # that command needs an extension
+    assert "'^[A-Za-z0-9-]+$'" in script  # the app name goes into a query
+
+
+def test_the_seed_job_runs_the_seed_as_its_own_command():
+    apps = read(MODULES / "apps.bicep")
+    block = apps.split("resource seed ", 1)[1].split("output defaultDomain", 1)[0]
+    assert "command: ['python', '-m', 'leyline.seed']" in block
+    assert "env: commonEnv" in block  # same production settings as every container
+    deploy = read(INFRA / "deploy.ps1")
+    assert "[switch]$Seed" in deploy and "job start --name leyline-seed" in deploy
+    assert (
+        "--args"
+        not in deploy.split("job start --name leyline-seed", 1)[1].split("\n", 1)[0]
+    )

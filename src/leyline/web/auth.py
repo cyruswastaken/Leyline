@@ -114,6 +114,7 @@ def callback() -> ResponseReturnValue:
             claims,
             groups_claim=settings.oidc_groups_claim,
             roles_claim=settings.oidc_roles_claim,
+            group_names=settings.oidc_group_names,
         )
     except Exception as exc:  # fail closed on *any* sign-in problem
         current_app.logger.warning("sign-in failed: %s", type(exc).__name__)

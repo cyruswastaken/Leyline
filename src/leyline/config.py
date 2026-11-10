@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     # Token claims that carry document-ACL groups and app roles.
     oidc_groups_claim: str = "groups"
     oidc_roles_claim: str = "roles"
+    # Entra puts group object IDs in the token, not names. This JSON object maps each
+    # ID to the group name documents use in their ACLs, e.g.
+    # OIDC_GROUP_NAMES='{"<object id>": "hr"}'. Empty (Keycloak sends names) means the
+    # claim is used as it is; when set, unmapped groups are ignored.
+    oidc_group_names: dict[str, str] = Field(default_factory=dict)
 
     # --- Sessions (server-side, in Redis) ---------------------------------
     redis_url: str = "redis://localhost:6379/0"

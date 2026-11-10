@@ -26,6 +26,10 @@ param(
     [string]$OidcTenantId = '',
     [securestring]$OidcClientSecret,
     [switch]$SkipBuild,
+    # Stop after pass 1 even when saved Entra values exist (the Azure redirect URI is only known then).
+    [switch]$InfraOnly,
+    # After the migrations, load the sample corpus (the worker then indexes it).
+    [switch]$Seed,
     [switch]$ScaleToZero
 )
 
@@ -67,9 +71,22 @@ if (-not $account) { throw 'Not signed in. Run: az login' }
 if ($account.state -ne 'Enabled') { throw "Subscription '$($account.name)' is $($account.state)." }
 Write-Host "Subscription: $($account.name)  Region: $Location  Resource group: $AppResourceGroup"
 
-$deployApps = [bool]($OidcClientId -and $OidcTenantId -and $OidcClientSecret)
+# Values saved by infra/entra.ps1 (the secret is encrypted for this Windows account).
+$oidcGroupNames = '{}'
+$entraState = Join-Path $PSScriptRoot '.entra.local.json'
+if (-not ($OidcClientId -or $OidcTenantId -or $OidcClientSecret) -and (Test-Path $entraState)) {
+    $saved = Get-Content $entraState -Raw | ConvertFrom-Json
+    if ($saved.clientId -and $saved.tenantId -and $saved.clientSecret) {
+        $OidcClientId = $saved.clientId
+        $OidcTenantId = $saved.tenantId
+        $OidcClientSecret = ConvertTo-SecureString $saved.clientSecret
+        if ($saved.groupNames) { $oidcGroupNames = $saved.groupNames }
+        Write-Host 'Using the Entra registration saved by infra/entra.ps1.'
+    }
+}
+$deployApps = [bool]($OidcClientId -and $OidcTenantId -and $OidcClientSecret) -and -not $InfraOnly
 if (-not $deployApps) {
-    Write-Host 'No Entra sign-in values given: deploying infrastructure and the image only.' -ForegroundColor Yellow
+    Write-Host 'Deploying infrastructure and the image only (pass 1).' -ForegroundColor Yellow
 }
 
 $paramFile = $null
@@ -94,13 +111,18 @@ try {
     # --- pass 1: infrastructure (apps off) ---------------------------------------------
     $paramFile = Write-ParameterFile $base
     Write-Host 'Pass 1: infrastructure (takes about 10 minutes: Postgres and Redis are slow)...'
-    $out = & az deployment sub create --location $Location --template-file $template --parameters "@$paramFile" --name leyline-infra --query properties.outputs -o json
-    if ($LASTEXITCODE -ne 0) { throw 'Infrastructure deployment failed.' }
+    # Azure sometimes answers a RequestConflict while a model deployment is still settling;
+    # the deployment is repeatable, so one retry after a pause is safe.
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $out = & az deployment sub create --location $Location --template-file $template --parameters "@$paramFile" --name leyline-infra --query properties.outputs -o json
+        if ($LASTEXITCODE -eq 0) { break }
+        if ($attempt -eq 2) { throw 'Infrastructure deployment failed.' }
+        Write-Warning 'The deployment failed; retrying once in 60 seconds (this is safe: it only fills in what is missing).'
+        Start-Sleep -Seconds 60
+    }
     $outputs = $out | ConvertFrom-Json
     $registry = $outputs.registryServer.value
-    $domain = $outputs.environmentDefaultDomain.value
     Write-Host "Registry: $registry"
-    Write-Host "Redirect URI to register in Entra: https://leyline-web.$domain/auth/callback"
 
     # --- image ---------------------------------------------------------------------------
     $tag = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -117,7 +139,7 @@ try {
     if (-not $deployApps) {
         Write-Host ''
         Write-Host "Infrastructure and image are ready ($image)." -ForegroundColor Green
-        Write-Host 'Register the app in Entra, then run this script again with -OidcClientId, -OidcTenantId and -OidcClientSecret.'
+        Write-Host 'Run ./infra/entra.ps1 -AssignMe, then run this script again (it reads the saved Entra values) to deploy the apps.'
         return
     }
 
@@ -129,6 +151,7 @@ try {
     $second.oidcClientId = $OidcClientId
     $second.oidcTenantId = $OidcTenantId
     $second.oidcClientSecret = $secretPlain
+    $second.oidcGroupNames = $oidcGroupNames
     Remove-Item $paramFile -Force -WhatIf:$false
     $paramFile = Write-ParameterFile $second
     Write-Host 'Pass 2: web app, worker and task job...'
@@ -136,16 +159,35 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'App deployment failed.' }
     $outputs = $out | ConvertFrom-Json
 
+    # The sign-in address depends on the environment's generated domain, so it can only be
+    # registered now. (Entra only needs it before the first sign-in.)
+    $redirect = "https://leyline-web.$($outputs.environmentDefaultDomain.value)/auth/callback"
+    Write-Host "Registering the sign-in address in Entra: $redirect"
+    & (Join-Path $PSScriptRoot 'entra.ps1') -RedirectUri $redirect | Out-Null
+
     # --- migrations -------------------------------------------------------------------------
     Write-Host 'Running database migrations...'
-    Invoke-Az containerapp job start --name leyline-task --resource-group $AppResourceGroup --image $image `
-        --command python --args '-m leyline.db upgrade' --output none
+    # The job's own command is the migration (see modules/apps.bicep), so nothing is overridden:
+    # az would pass '-m leyline.db upgrade' to Python as one argument and fail.
+    Invoke-Az containerapp job start --name leyline-task --resource-group $AppResourceGroup --output none
     for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Seconds 10
         $status = & az containerapp job execution list --name leyline-task --resource-group $AppResourceGroup --query '[0].properties.status' -o tsv
         if ($status -in 'Succeeded', 'Failed', 'Stopped') { break }
     }
-    if ($status -ne 'Succeeded') { throw "Migration job ended with status '$status'. See: az containerapp job logs show --name leyline-task --resource-group $AppResourceGroup" }
+    if ($status -ne 'Succeeded') { throw "Migration job ended with status '$status'. See: ./infra/logs.ps1 -App leyline-task -Errors" }
+
+    if ($Seed) {
+        Write-Host 'Loading the sample corpus...'
+        Invoke-Az containerapp job start --name leyline-seed --resource-group $AppResourceGroup --output none
+        for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 10
+            $seedStatus = & az containerapp job execution list --name leyline-seed --resource-group $AppResourceGroup --query '[0].properties.status' -o tsv
+            if ($seedStatus -in 'Succeeded', 'Failed', 'Stopped') { break }
+        }
+        if ($seedStatus -ne 'Succeeded') { throw "Seed job ended with status '$seedStatus'. See: ./infra/logs.ps1 -App leyline-seed -Errors" }
+        Write-Host 'Corpus queued; the worker indexes it in the background (watch: ./infra/logs.ps1 -App worker).'
+    }
 
     # The password changed this run, so make the running replicas pick up the new secret.
     foreach ($app in 'leyline-web', 'leyline-worker') {
