@@ -300,3 +300,35 @@ def test_the_seed_job_runs_the_seed_as_its_own_command():
         "--args"
         not in deploy.split("job start --name leyline-seed", 1)[1].split("\n", 1)[0]
     )
+
+
+def test_the_logs_script_can_hide_the_health_probes():
+    script = read(INFRA / "logs.ps1")
+    assert "[switch]$NoProbes" in script and "!has '/healthz'" in script
+
+
+def test_the_entra_script_retries_reports_and_verifies_assignments():
+    # Assigning a group or role to a user created a moment ago can fail at first; the
+    # old script swallowed that silently, leaving six demo users with no role (sign-in
+    # requires one) and no group.
+    script = read(INFRA / "entra.ps1")
+    assert "function Invoke-GraphRetry" in script
+    assert "catch { Write-Verbose" not in script  # no silent swallowing any more
+    assert "Verifying the demo users" in script and "exit 1" in script
+    assert 'Invoke-GraphRetry "membership of' in script
+    assert 'Invoke-GraphRetry "role' in script
+
+
+def test_demo_passwords_can_be_reset_without_ever_printing_them():
+    script = read(INFRA / "entra.ps1")
+    assert "[switch]$ResetPasswords" in script and "function New-DemoPassword" in script
+    assert script.count("RandomNumberGenerator") == 1  # one generator, not two copies
+    assert not re.search(r"Write-(Host|Output|Warning)[^\n]*\$password", script)
+
+
+def test_the_entra_script_keeps_redirect_addresses_that_are_already_registered():
+    # Replacing the list removed the Azure sign-in address whenever the script ran without
+    # -RedirectUri, and Microsoft then refused every Azure sign-in (redirect mismatch).
+    script = read(INFRA / "entra.ps1")
+    assert ".web.redirectUris" in script and "Select-Object -Unique" in script
+    assert "@($registered) + @($redirects)" in script

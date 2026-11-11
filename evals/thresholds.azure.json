@@ -1,0 +1,16 @@
+{
+  "_comment": "Regression floors for the Azure deployment: text-embedding-3-small (768 dimensions, NO task prefixes) with SEARCH_MIN_SIMILARITY=0.37 and SEARCH_MIN_LEXICAL=0.60 (the values in infra/modules/apps.bicep), replayed from evals/embeddings.azure.json on the 78-case golden set (2026-11-10). Chosen from the middle of a plateau (0.35-0.40 gives identical results; 0.33 lets unanswerable questions through, 0.43 loses a document). Measured: recall@1 0.963, recall@3 1.000, recall@5 1.000, mrr 0.978, refusal_rate 1.000, restricted_pass_rate 1.0, acl_leaks 0. Floors keep about 0.03-0.08 of slack. Raise them when retrieval improves; never lower them to make a change pass. acl_leaks must always be 0.",
+  "hybrid": {
+    "min": {
+      "recall@1": 0.93,
+      "recall@3": 0.97,
+      "recall@5": 0.98,
+      "mrr": 0.95,
+      "refusal_rate": 0.92,
+      "restricted_pass_rate": 1.0
+    },
+    "max": {
+      "acl_leaks": 0
+    }
+  }
+}

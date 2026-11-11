@@ -101,6 +101,11 @@ var commonEnv = [
   { name: 'EMBEDDING_API_KEY', secretRef: 'openai-api-key' }
   // text-embedding-3 can return the schema's fixed 768 dimensions directly.
   { name: 'EMBEDDING_SEND_DIMENSIONS', value: 'true' }
+  // Relevance floors calibrated for text-embedding-3-small (the defaults are for
+  // nomic-embed-text and would refuse most questions): see docs/EVALUATION.md and
+  // evals/thresholds.azure.json. tests/test_evals_azure.py gates exactly these values.
+  { name: 'SEARCH_MIN_SIMILARITY', value: '0.37' }
+  { name: 'SEARCH_MIN_LEXICAL', value: '0.60' }
   { name: 'OIDC_METADATA_URL', value: oidcMetadataUrl }
   { name: 'OIDC_CLIENT_ID', value: oidcClientId }
   { name: 'OIDC_GROUP_NAMES', value: oidcGroupNames }

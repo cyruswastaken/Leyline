@@ -2,6 +2,8 @@
 
 Leyline runs on **Azure Container Apps** with PostgreSQL (pgvector) as the search index, Azure Managed Redis, Blob Storage, Key Vault, Azure OpenAI, Microsoft Entra ID for sign-in and Log Analytics. Everything is Bicep in `infra/`; nothing has been deployed yet.
 
+Day-to-day operation and fixes are in the [runbooks](RUNBOOKS.md); the reasons for the choices are in the [decision records](adr/README.md).
+
 ## Infrastructure as code (`infra/`)
 
 ```text
@@ -29,7 +31,7 @@ az login
 - **Models:** the GPT-5 family accepts only its default temperature, so the template sets `LLM_SEND_TEMPERATURE=false` and a 55 second timeout.
 - **Cost:** about $35-45 a month while running (Postgres B1ms, Managed Redis B0 at $0.019/hour, registry, Container Apps, logs); model calls cost cents for a demo. Estimates, not a price-sheet check. With a student credit, deploy for demos and tear down.
 - **Deployed (2026-11-10):** live at `https://leyline-web.<generated>.koreacentral.azurecontainerapps.io`. `/readyz` reports `ready` with every check true (database, schema, blob storage, Redis, model, sign-in, embeddings). `./infra/logs.ps1 [-App web|worker|leyline-task] [-Errors] [-System]` reads container logs without any CLI extension.
-- **Corpus:** `./infra/deploy.ps1 -Seed` (or `az containerapp job start --name leyline-seed --resource-group rg-leyline-app`) queues the sample documents; the worker indexes them. The first load created 49 documents and all 49 were indexed with `text-embedding-3-small`. Relevance floors are still the ones calibrated for `nomic-embed-text` and must be re-swept for this model (`python -m leyline.evals --index hybrid --sweep` with embeddings re-recorded).
+- **Corpus:** `./infra/deploy.ps1 -Seed` (or `az containerapp job start --name leyline-seed --resource-group rg-leyline-app`) queues the sample documents; the worker indexes them. The first load created 49 documents and all 49 were indexed with `text-embedding-3-small`. The default relevance floors are calibrated for `nomic-embed-text` and made chat refuse nearly everything on Azure (the first test showed "I couldn't find relevant information" for every question), so the template sets floors measured for this model (`SEARCH_MIN_SIMILARITY=0.37`, `SEARCH_MIN_LEXICAL=0.60`; recall@1 0.963, recall@5 1.000, all unanswerable questions refused, zero ACL leaks) and `tests/test_evals_azure.py` gates them. See docs/EVALUATION.md.
 - **Lessons from the first real deploy** (each is now guarded by a test): (1) the OpenAI key must be read after the model deployments finish (`RequestConflict` otherwise); (2) this subscription creates new Container Apps environments as **express** unless `environmentMode: 'WorkloadProfiles'` is set, and express has no Key Vault references or jobs; (3) production validation runs in every process, so the worker and job need `SESSION_COOKIE_SECURE` too (all containers share one environment block); (4) `?ssl_context=true` in `DATABASE_URL` must be turned into a real TLS setting (done in `Database`); (5) `az containerapp job start --args` splits badly on `-m`, so the job's own command is the migration. `what-if` and `validate` caught none of these.
 - **Checked:** the templates compile without warnings (`tests/test_infra.py` compiles them when the Bicep compiler is installed) and pass `az deployment sub what-if` and `validate` on the subscription. A real deploy has not been run.
 
@@ -65,9 +67,11 @@ exists on the Azure for Students subscription and was read back to confirm all f
   and the app translates ids to the names documents use. With a map configured, a group that is not in it
   grants nothing, and a token entry that merely spells `hr` is ignored. Overage (more than 200 groups) still
   fails closed.
+- **Re-running is safe:** the script keeps redirect addresses that are already registered (an early version replaced the list and silently removed the Azure address, which made every Azure sign-in fail with a redirect mismatch). Group and role assignments are retried (a user created a moment ago is not yet known everywhere), "already assigned" counts as success, any real failure is reported, and the demo users are verified against the expected groups and roles at the end (the script exits with an error if anything is missing). `-DemoUsers -ResetPasswords` also gives users that already exist a new password, for when the password file is lost.
 - **The client secret** is created for 180 days and stored encrypted for your Windows account in
   `infra/.entra.local.json` (git-ignored); it is never printed, and `deploy.ps1` reads it from there. Demo user
   passwords (only with `-DemoUsers`) go to `infra/.entra-demo-users.local.txt` (git-ignored), never to the screen.
+- **Verified on Azure (user-reported, 2026-11-11):** HR and employee demo users signed in through Entra and per-group access behaved as expected; the logs show three sign-ins and four chat questions with no denials or errors. **Not tested on Azure:** the finance and security users and the role pages for the knowledge admin, security auditor and support agent (all covered by the local Keycloak tests and the access matrix).
 - **Verified:** a real sign-in through Entra works (the owner account, with all four roles). **Not verified yet:** the groups claim and `OIDC_GROUP_NAMES` mapping with demo users (needs `-DemoUsers` and the corpus), and company branding on the free tier.
 
 ## Original manual sequence (for reference)

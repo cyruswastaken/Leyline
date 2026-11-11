@@ -25,6 +25,7 @@
   ./infra/entra.ps1 -WhatIf
   ./infra/entra.ps1 -RedirectUri https://leyline-web.<domain>/auth/callback
   ./infra/entra.ps1 -DemoUsers
+  ./infra/entra.ps1 -DemoUsers -ResetPasswords   # also new passwords for demo users that exist
   ./infra/entra.ps1 -Remove
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
@@ -32,6 +33,9 @@ param(
     # Pass 1 of deploy.ps1 prints it. Keep the local address so local sign-in tests still work.
     [string]$RedirectUri = '',
     [switch]$DemoUsers,
+    # With -DemoUsers: also give demo users that already exist a new password (use it when the
+    # password file is lost). Passwords go to the git-ignored file, never to the screen.
+    [switch]$ResetPasswords,
     [switch]$AssignMe,
     [switch]$NewSecret,
     [switch]$Remove,
@@ -73,6 +77,7 @@ function Invoke-Az {
 }
 
 function Invoke-Graph([string]$Method, [string]$Path, $Body = $null) {
+    $WhatIfPreference = $false  # every change is guarded by Step, so -WhatIf must not hit the stderr redirect below
     $a = @('rest', '--method', $Method, '--url', "https://graph.microsoft.com/v1.0$Path", '--headers', 'Content-Type=application/json')
     $tmp = $null
     if ($null -ne $Body) {
@@ -80,12 +85,46 @@ function Invoke-Graph([string]$Method, [string]$Path, $Body = $null) {
         [System.IO.File]::WriteAllText($tmp, ($Body | ConvertTo-Json -Depth 10 -Compress))
         $a += @('--body', "@$tmp")
     }
+    $errFile = Join-Path ([System.IO.Path]::GetTempPath()) ("entra-err-{0}.txt" -f [guid]::NewGuid())
     try {
-        $out = & az @a
-        if ($LASTEXITCODE -ne 0) { throw "Graph $Method $Path failed" }
+        $out = & az @a 2> $errFile
+        if ($LASTEXITCODE -ne 0) {
+            $detail = if (Test-Path $errFile) { (Get-Content $errFile -Raw) } else { '' }
+            throw "Graph $Method $Path failed: $detail"
+        }
         if ($out) { return ($out -join "`n" | ConvertFrom-Json) }
     }
-    finally { if ($tmp -and (Test-Path $tmp)) { Remove-Item $tmp -Force -WhatIf:$false } }
+    finally {
+        foreach ($f in @($tmp, $errFile)) { if ($f -and (Test-Path $f)) { Remove-Item $f -Force -WhatIf:$false } }
+    }
+}
+
+$script:failures = @()
+
+function Invoke-GraphRetry([string]$Description, [string]$Method, [string]$Path, $Body = $null) {
+    # A user created a moment ago is not yet known to every Entra replica, so adding it to a
+    # group or giving it a role can fail at first. Retry; treat "already there" as success;
+    # report anything else (it used to be swallowed, leaving users with no role or group).
+    for ($attempt = 1; $attempt -le 8; $attempt++) {
+        try { Invoke-Graph $Method $Path $Body | Out-Null; return $true }
+        catch {
+            $message = $_.Exception.Message
+            if ($message -match 'already exist|already been assigned|references already exist') { return $true }
+            if ($attempt -eq 8) {
+                Write-Warning "$Description failed: $message"
+                $script:failures += $Description
+                return $false
+            }
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
+function New-DemoPassword {
+    $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'.ToCharArray()
+    $bytes = New-Object byte[] 20
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    (-join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })) + 'a1!'
 }
 
 function Step([string]$What, [scriptblock]$Do) {
@@ -143,6 +182,10 @@ $settings = @{
 $app = Find-App
 if ($app) {
     Write-Host "App registration exists: $($app.appId)"
+    # Keep the addresses that are already registered (for example the Azure one added by
+    # deploy.ps1): replacing the list silently broke the Azure sign-in once.
+    $registered = (Invoke-Graph GET "/applications/$($app.id)").web.redirectUris
+    $settings.web.redirectUris = @($registered) + @($redirects) | Where-Object { $_ } | Select-Object -Unique
     Step "update app registration $AppName (roles, redirect URIs, claims)" {
         # An existing role may only be re-sent unchanged; ours keep fixed ids.
         Invoke-Graph PATCH "/applications/$($app.id)" $settings | Out-Null
@@ -206,8 +249,7 @@ Step "write $stateFile" {
 function Add-Assignments($userId, [string[]]$roleValues) {
     foreach ($rv in $roleValues) {
         $r = $roles | Where-Object { $_.value -eq $rv }
-        try { Invoke-Graph POST "/users/$userId/appRoleAssignments" @{ principalId = $userId; resourceId = $sp.id; appRoleId = $r.id } | Out-Null }
-        catch { Write-Verbose "role $rv already assigned or not assignable: $_" }
+        Invoke-GraphRetry "role $rv for user $userId" POST "/users/$userId/appRoleAssignments" @{ principalId = $userId; resourceId = $sp.id; appRoleId = $r.id } | Out-Null
     }
 }
 if ($AssignMe -and $sp) {
@@ -220,10 +262,7 @@ if ($DemoUsers -and $sp) {
         $upn = "$($p.user)@$domain"
         $existing = Invoke-Graph GET "/users?`$filter=userPrincipalName eq '$upn'&`$select=id" | Select-Object -ExpandProperty value | Select-Object -First 1
         if (-not $existing) {
-            $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'.ToCharArray()
-            $bytes = New-Object byte[] 20
-            [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-            $password = (-join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })) + 'a1!'
+            $password = New-DemoPassword
             Step "create demo user $upn" {
                 $script:existing = Invoke-Graph POST '/users' @{
                     accountEnabled = $true; displayName = $p.display; mailNickname = $p.user; userPrincipalName = $upn
@@ -232,10 +271,17 @@ if ($DemoUsers -and $sp) {
                 $script:lines += "$upn  $password"
             }
         }
+        elseif ($ResetPasswords) {
+            $password = New-DemoPassword
+            Step "set a new password for $upn" {
+                Invoke-Graph PATCH "/users/$($existing.id)" @{ passwordProfile = @{ forceChangePasswordNextSignIn = $false; password = $password } } | Out-Null
+                $script:lines += "$upn  $password"
+            }
+        }
         if ($existing) {
             foreach ($g in $p.groups) {
                 $gid = ($groupIds.GetEnumerator() | Where-Object { $_.Value -eq $g }).Key
-                if ($gid) { Step "add $upn to $GroupPrefix$g" { try { Invoke-Graph POST "/groups/$gid/members/`$ref" @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($existing.id)" } | Out-Null } catch { Write-Verbose 'already a member' } } }
+                if ($gid) { Step "add $upn to $GroupPrefix$g" { Invoke-GraphRetry "membership of $upn in $GroupPrefix$g" POST "/groups/$gid/members/`$ref" @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($existing.id)" } | Out-Null } }
             }
             Step "assign roles $($p.roles -join ', ') to $upn" { Add-Assignments $existing.id $p.roles }
         }
@@ -247,6 +293,37 @@ if ($DemoUsers -and $sp) {
         }
         Write-Host "Demo user passwords were written to $usersFile (not shown here)."
     }
+
+    if (-not $WhatIfPreference) {
+        Write-Host 'Verifying the demo users (groups and roles as Entra reports them)...'
+        $roleName = @{}
+        foreach ($r in $roles) { $roleName[$r.id] = $r.value }
+        for ($round = 1; $round -le 4; $round++) {
+            $assigned = (Invoke-Graph GET "/servicePrincipals/$($sp.id)/appRoleAssignedTo").value
+            $members = @{}
+            foreach ($entry in $groupIds.GetEnumerator()) {
+                $members[$entry.Value] = @((Invoke-Graph GET "/groups/$($entry.Key)/members").value | ForEach-Object { $_.userPrincipalName })
+            }
+            $problems = @()
+            foreach ($p in $personas) {
+                $upn = "$($p.user)@$domain"
+                $haveGroups = @($groupNames | Where-Object { $members[$_] -contains $upn })
+                $haveRoles = @($assigned | Where-Object { $_.principalDisplayName -eq $p.display } | ForEach-Object { $roleName[$_.appRoleId] })
+                $missingGroups = @($p.groups | Where-Object { $haveGroups -notcontains $_ })
+                $missingRoles = @($p.roles | Where-Object { $haveRoles -notcontains $_ })
+                if ($missingGroups -or $missingRoles) { $problems += "$($p.user): missing groups [$($missingGroups -join ',')] roles [$($missingRoles -join ',')]" }
+                elseif ($round -eq 1 -or -not $problems) { Write-Host ("  ok  {0,-15} groups=[{1}] roles=[{2}]" -f $p.user, (($haveGroups | Sort-Object) -join ','), (($haveRoles | Sort-Object) -join ',')) }
+            }
+            if (-not $problems) { break }
+            if ($round -lt 4) { Start-Sleep -Seconds 10 }
+        }
+        if ($problems) { foreach ($line in $problems) { Write-Warning $line }; $script:failures += $problems }
+    }
+}
+
+if ($script:failures.Count -gt 0) {
+    Write-Error "Some assignments are missing (see the warnings above). Run this script again: it only fills in what is missing."
+    exit 1
 }
 
 Write-Host ''

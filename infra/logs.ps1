@@ -11,6 +11,7 @@
   ./infra/logs.ps1 -App worker -Minutes 60
   ./infra/logs.ps1 -Errors                  # only lines that look like errors
   ./infra/logs.ps1 -System                  # platform events (image pulls, restarts, secrets)
+  ./infra/logs.ps1 -App web -NoProbes       # requests without the health probes
 #>
 param(
     [string]$App = '',
@@ -18,6 +19,8 @@ param(
     [int]$Tail = 60,
     [switch]$Errors,
     [switch]$System,
+    # Hide the platform's health probes (/healthz, /readyz), which otherwise fill the output.
+    [switch]$NoProbes,
     [string]$ResourceGroup = 'rg-leyline-app',
     [string]$Workspace = 'log-leyline'
 )
@@ -38,6 +41,7 @@ if ($System) {
 else {
     $kql = "ContainerAppConsoleLogs_CL | where TimeGenerated > ago($($Minutes)m)"
     if ($App) { $kql += " | where ContainerName_s == '$App' or ContainerAppName_s == '$App'" }
+    if ($NoProbes) { $kql += " | where Log_s !has '/healthz' and Log_s !has '/readyz'" }
     if ($Errors) { $kql += " | where Log_s matches regex '(?i)(error|exception|traceback|failed|refused|denied|timeout)'" }
     $kql += " | order by TimeGenerated desc | take $Tail | order by TimeGenerated asc | project TimeGenerated, ContainerName_s, Log_s"
 }

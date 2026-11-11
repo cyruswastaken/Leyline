@@ -136,6 +136,45 @@ environment variables, and update `evals/thresholds.json`. The keyword floor app
 while the vector leg is running; keyword-only search (no embedder, or the embedding service
 down) keeps full keyword recall.
 
+## The Azure model (text-embedding-3-small)
+
+The Azure deployment embeds with `text-embedding-3-small` at 768 dimensions and **no task prefixes**.
+Its similarity scale differs from `nomic-embed-text`, so it has its own recording
+(`evals/embeddings.azure.json`), its own floors in `infra/modules/apps.bicep`
+(`SEARCH_MIN_SIMILARITY=0.37`, `SEARCH_MIN_LEXICAL=0.60`) and its own gate
+(`evals/thresholds.azure.json`, `tests/test_evals_azure.py`, which reads the floors from the Bicep
+file so the gate cannot drift from what is deployed).
+
+| Floors (78 cases) | recall@1 | recall@3 | recall@5 | MRR | refusal | ACL leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| nomic floors (0.58 / 0.5) on the Azure model | 0.426 | 0.426 | 0.426 | 0.426 | 1.000 | 0 |
+| Azure floors (0.37 / 0.60) | 0.963 | 1.000 | 1.000 | 0.978 | 1.000 | 0 |
+
+With the nomic floors, chat answered "I couldn't find relevant information" to nearly everything on
+Azure; the sweep showed a plateau at similarity 0.35-0.40 (0.33 lets unanswerable questions through,
+0.43 loses a document) and 0.37 is its middle.
+
+Re-record and re-sweep (from a folder **without** a `.env`, see the pitfall below):
+
+```powershell
+# the key is read from Azure for this command only; do not paste or save it
+$env:EMBEDDING_API_KEY = az cognitiveservices account keys list -g rg-leyline -n leyline-openai --query key1 -o tsv
+$env:EMBEDDING_BASE_URL = "https://leyline-openai.openai.azure.com/openai/v1/"
+$env:EMBEDDING_MODEL = "text-embedding-3-small"; $env:EMBEDDING_SEND_DIMENSIONS = "true"
+python -m leyline.evals --index hybrid --golden <repo>\evals\golden.jsonl --seed --reindex --record-embeddings <repo>\evals\embeddings.azure.json
+python -m leyline.evals --index hybrid --golden <repo>\evals\golden.jsonl --embeddings <repo>\evals\embeddings.azure.json --sweep
+```
+
+**Pitfall (cost a wrong first recording):** a local `.env` that sets the nomic prefixes
+(`EMBEDDING_*_PREFIX`) is read by the app even when you clear the variables in your shell, and PowerShell
+treats `$env:X = ""` as *unset*. A recording made that way embeds prefixed text the deployment never sends,
+and replay then fails with `MissingEmbeddingError`. Run the commands from a directory with no `.env`
+(point `CORPUS_DIR` at the repo's `corpus`) and check `Settings().embedding_document_prefix` is empty first.
+Use a throwaway database (`CREATE DATABASE leyline_evals`, then `python -m leyline.db upgrade`), not your
+development one.
+
+Known miss: `u005` ("Can I bring my dog to work?") is now refused; no unanswerable case slips through.
+
 ## The CI gate
 
 `tests/test_evals.py` and the *Retrieval evaluation (offline)* CI step enforce

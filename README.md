@@ -22,6 +22,8 @@ This is a portfolio project being built to production standards. The included do
 | [Usage guide](docs/USAGE.md) | Install, configure, run, and test Leyline locally |
 | [Architecture and security](docs/ARCHITECTURE.md) | Request flow, authorization boundary, and known risks |
 | [Azure deployment guide](docs/DEPLOYMENT.md) | Cloud deployment overview, configuration, monitoring, and teardown |
+| [Runbooks](docs/RUNBOOKS.md) | Deploy, tear down, rebuild, and fix sign-in, search, worker, database and cost problems |
+| [Decision records](docs/adr/README.md) | Why the system is built this way: the choices, trade-offs and the evidence |
 | [Development guide](docs/DEVELOPMENT.md) | Repository conventions and validation workflow |
 | [Frontend](docs/FRONTEND.md) | Design system, build, structure, accessibility and how to work on the UI |
 | [Threat model](docs/THREAT_MODEL.md) | STRIDE and OWASP LLM Top 10 analysis, controls and the tests that prove them |
