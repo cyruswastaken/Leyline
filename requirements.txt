@@ -33,7 +33,7 @@ opentelemetry-semantic-conventions==0.66b2
 pg8000==1.31.6
 pgvector==0.5.1
 pycparser==3.12
-pydantic-settings==2.16.2
+pydantic-settings==2.16.3
 pydantic==2.14.3
 pydantic_core==2.50.4
 pypdf==6.21.4

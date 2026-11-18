@@ -21,7 +21,7 @@ dependencies = [
     "pgvector>=0.3",
     # pure-Python driver: identical on locked-down laptops, CI and containers
     "pg8000>=1.31,<2",
-    "pydantic-settings>=2.6,<3",
+    "pydantic-settings>=2.16.3,<3",
     "pypdf>=5,<7",
     "redis>=5,<9",
     "requests>=2.32,<3",
