@@ -70,7 +70,8 @@ jobs:
       - name: Build the image
         run: docker build -t leyline-app:scan .
       - name: Scan for HIGH and CRITICAL vulnerabilities with a fix available
-        uses: aquasecurity/trivy-action@0.28.0
+        # Pinned to a commit (v0.36.0): the old tag 0.28.0 does not exist, so the job never started.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: leyline-app:scan
           severity: HIGH,CRITICAL
@@ -78,7 +79,7 @@ jobs:
           exit-code: "1"
           vuln-type: os,library
       - name: Scan the repository for misconfiguration (Dockerfile, compose)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: .

@@ -163,7 +163,7 @@ try {
     # registered now. (Entra only needs it before the first sign-in.)
     $redirect = "https://leyline-web.$($outputs.environmentDefaultDomain.value)/auth/callback"
     Write-Host "Registering the sign-in address in Entra: $redirect"
-    & (Join-Path $PSScriptRoot 'entra.ps1') -RedirectUri $redirect | Out-Null
+    & (Join-Path $PSScriptRoot 'entra.ps1') -RedirectUri $redirect -PruneRedirects | Out-Null
 
     # --- migrations -------------------------------------------------------------------------
     Write-Host 'Running database migrations...'
@@ -197,7 +197,7 @@ try {
 
     Write-Host ''
     Write-Host "Leyline is up: $($outputs.webUrl.value)" -ForegroundColor Green
-    Write-Host 'Next: load the corpus (see docs/DEPLOYMENT.md, "Seed the corpus").'
+    if (-not $Seed) { Write-Host 'Next: load the corpus with -Seed (see docs/DEPLOYMENT.md).' }
 }
 finally {
     # -WhatIf:$false, or a preview run would leave the file behind.

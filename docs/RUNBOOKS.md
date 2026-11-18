@@ -22,9 +22,10 @@ All commands run from the repository root in Windows PowerShell after `az login`
 | --- | --- |
 | `./infra/deploy.ps1` | Deploy or update everything (`-WhatIf` previews, `-InfraOnly`, `-Seed`, `-ScaleToZero`) |
 | `./infra/teardown.ps1` | Delete `rg-leyline-app` and purge the Key Vault (`-IncludeModels`, `-Force`) |
-| `./infra/entra.ps1` | Entra app, roles, groups, secret, demo users (`-DemoUsers`, `-ResetPasswords`, `-NewSecret`, `-Remove`) |
+| `./infra/entra.ps1` | Entra app, roles, groups, secret, demo users (`-DemoUsers`, `-ResetPasswords`, `-NewSecret`, `-PruneRedirects`, `-Remove`) |
 | `./infra/budget.ps1` | Monthly cost alert |
 | `./infra/logs.ps1` | Container logs without any CLI extension (`-App`, `-Minutes`, `-Errors`, `-System`, `-NoProbes`) |
+| `./infra/ci-identity.ps1` | The identity and GitHub environment for the Deploy workflow (`-SkipGitHub`, `-Remove`) |
 
 ## 1. Deploy, update, tear down, rebuild
 
@@ -57,7 +58,7 @@ fills in what is missing. See section 11 for the failures seen so far.
 ./infra/teardown.ps1
 ```
 
-It asks you to type the resource group name. **Everything in `rg-leyline-app` is deleted for good,
+It asks you to type the resource group name (`-Force` skips that). It took about 24 minutes in the one full run, mostly Postgres and Redis. **Everything in `rg-leyline-app` is deleted for good,
 including the database**: documents, conversations, tickets, audit and security events, uploaded files and
 the 7-day database backups go with the server. What survives: the Azure OpenAI account and its model
 deployments, the Entra app and its secret file, the budget, and the git repository. The Key Vault is purged
@@ -69,8 +70,8 @@ so its name can be reused.
 ./infra/deploy.ps1 -Seed
 ```
 
-This recreates everything and loads the 49 sample documents. The web address changes (a new generated
-domain), and `deploy.ps1` registers the new sign-in address in Entra for you. Users have to ask their
+This recreates everything and loads the 49 sample documents. A full rebuild from an empty resource group took about 17 minutes and needed no manual step (verified 2026-11-11). The web address changes (a new generated
+domain), and `deploy.ps1` registers the new sign-in address in Entra for you and removes the dead one (`-PruneRedirects`). Users have to ask their
 questions again: conversations and tickets are not restored.
 
 ## 2. The app is not ready (`/readyz` returns 503)
@@ -274,3 +275,41 @@ Creates (or completes) seven users like the local Keycloak ones, gives them thei
 verifies the result; it exits with an error if anything is missing, and re-running only fills in what is missing.
 Passwords go to `infra/.entra-demo-users.local.txt`, never to the screen. Sign in as each in a private window on
 the **Azure** address. Remove them (and the whole registration) with `./infra/entra.ps1 -Remove`.
+
+## 14. Ship a change from GitHub (the Deploy workflow)
+
+The `Deploy to Azure` workflow **updates the running environment**; it cannot create it from nothing and
+never changes Entra (see [decision 0009](adr/0009-ci-deploys-updates-only-with-a-narrow-identity.md)).
+
+**One-time setup** (creates an Entra app with one federated credential, narrow Azure roles, and a GitHub
+environment that needs your approval; preview first, nothing is changed):
+
+```powershell
+./infra/ci-identity.ps1 -WhatIf
+```
+
+```powershell
+./infra/ci-identity.ps1
+```
+
+**Each deploy:**
+1. Push to `main` and wait until the **CI** and **Security** workflows are green for that commit.
+2. GitHub > Actions > **Deploy to Azure** > Run workflow > `action = preview`. Approve the `azure` environment
+   when GitHub asks. Read the what-if: it should show the two apps changing to the new image and nothing created or
+   deleted. (Some "modify" lines are Azure's own noise: references that are the same value.)
+3. Run it again with `action = deploy` (tick `seed` to also reload the sample corpus). Approve again. It builds
+   and pushes the image, updates the apps, runs the migrations, restarts the apps and waits for `/readyz`.
+
+**After a full rebuild** (`teardown.ps1` then `deploy.ps1`) the role assignments inside the deleted group are
+gone: run `./infra/ci-identity.ps1` again.
+
+| What you see | Cause | Fix |
+| --- | --- | --- |
+| The `gate` job fails: "has no successful run for commit" | CI or Security has not passed on that commit | wait for them, or fix them; the run must be on `main` |
+| `AADSTS70021` / "No matching federated identity record" at login | the environment name or repository differs from the credential's subject | `./infra/ci-identity.ps1` (it corrects the subject); the job must use environment `azure` |
+| `AuthorizationFailed` | the role assignments are missing (for example after a rebuild) | `./infra/ci-identity.ps1` |
+| "leyline-web does not exist" | there is no environment to update | create it with `./infra/deploy.ps1 -Seed` first |
+| The migration job does not succeed | see section 5 | `./infra/logs.ps1 -App leyline-task -Errors` |
+| "The site did not become ready" | see section 2 | `./infra/logs.ps1 -App web -NoProbes -Errors` |
+
+To remove all of it: `./infra/ci-identity.ps1 -Remove`. (It is separate from `./infra/entra.ps1 -Remove`, which does not touch the CI identity.)

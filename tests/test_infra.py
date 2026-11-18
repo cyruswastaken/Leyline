@@ -332,3 +332,23 @@ def test_the_entra_script_keeps_redirect_addresses_that_are_already_registered()
     script = read(INFRA / "entra.ps1")
     assert ".web.redirectUris" in script and "Select-Object -Unique" in script
     assert "@($registered) + @($redirects)" in script
+
+
+def test_old_azure_sign_in_addresses_are_pruned_on_deploy_but_local_ones_stay():
+    # The generated domain changes with every rebuild; dead addresses must not pile up.
+    entra = read(INFRA / "entra.ps1")
+    assert "[switch]$PruneRedirects" in entra
+    assert (
+        "-notlike 'https://leyline-web.*.azurecontainerapps.io/auth/callback'" in entra
+    )
+    assert (
+        "$PruneRedirects -and $RedirectUri" in entra
+    )  # only when a new address is given
+    assert "-RedirectUri $redirect -PruneRedirects" in read(INFRA / "deploy.ps1")
+    # the local addresses are always added back
+    assert "http://localhost:8000/auth/callback" in entra
+
+
+def test_deploy_only_suggests_loading_the_corpus_when_it_did_not():
+    deploy = read(INFRA / "deploy.ps1")
+    assert "if (-not $Seed) { Write-Host 'Next: load the corpus" in deploy

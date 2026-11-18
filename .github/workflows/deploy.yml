@@ -1,0 +1,196 @@
+name: Deploy to Azure
+
+# UPDATE deploys of the running Leyline environment: build the image, update the apps, run the
+# migrations, restart, check readiness. It does not create the environment from nothing and it
+# never touches Microsoft Entra: first-time setup and rebuilds stay with ./infra/deploy.ps1 on a
+# workstation (see docs/DEPLOYMENT.md and docs/adr/0009-ci-deploys-updates-only-with-a-narrow-identity.md).
+#
+# Why it is built this way (the repository is PUBLIC):
+#   * Manual trigger only: no push, pull_request or pull_request_target, so nobody else can start it.
+#   * Runs only from main, and only when CI and Security passed on the very same commit.
+#   * The `azure` environment requires an approval from a named reviewer before any job that can
+#     reach Azure starts, and the Azure identity trusts only that environment of this repository.
+#   * No stored Azure secret: the job logs in with a short-lived OIDC token (federated credential).
+#   * Third-party actions are pinned to a commit (tests/test_workflows.py enforces it).
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "preview = show what would change (nothing is changed); deploy = apply it"
+        type: choice
+        options: [preview, deploy]
+        default: preview
+      seed:
+        description: "After deploying, also load the sample corpus (safe to repeat)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-deploy
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Checks passed on this commit
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Only from main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Deploys run only from main (this run is on $REF)."
+            exit 1
+          fi
+      - name: CI and Security succeeded for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for workflow in CI Security; do
+            result="$(gh run list --repo "$REPO" --workflow "$workflow" --commit "$SHA" --event push \
+              --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')"
+            if [ "$result" -lt 1 ]; then
+              echo "::error::The $workflow workflow has no successful run for commit $SHA. Push to main, wait for it to pass, then deploy."
+              exit 1
+            fi
+            echo "$workflow: passed for $SHA"
+          done
+
+  azure:
+    name: ${{ inputs.action == 'deploy' && 'Deploy' || 'Preview' }} (environment azure)
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Requires an approval by the configured reviewer before this job starts.
+    environment: azure
+    permissions:
+      id-token: write # the OIDC token for the Azure login, nothing else
+      contents: read
+    env:
+      RESOURCE_GROUP: rg-leyline-app
+      LOCATION: koreacentral
+      INPUT_ACTION: ${{ inputs.action }}
+      INPUT_SEED: ${{ inputs.seed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC, no stored secret)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the running environment (this workflow only updates it)
+        run: |
+          set -euo pipefail
+          az config set extension.use_dynamic_install=yes_without_prompt extension.dynamic_install_allow_preview=true >/dev/null
+          if ! az containerapp show -n leyline-web -g "$RESOURCE_GROUP" -o json > "$RUNNER_TEMP/web.json" 2>/dev/null; then
+            echo "::error::leyline-web does not exist. This workflow only updates a running environment; create it first with ./infra/deploy.ps1."
+            exit 1
+          fi
+          env_value() { jq -r --arg n "$1" '.properties.template.containers[0].env[] | select(.name == $n) | .value' "$RUNNER_TEMP/web.json"; }
+          # The live app is the source of truth for the sign-in settings, so none is stored in GitHub.
+          {
+            echo "OIDC_CLIENT_ID=$(env_value OIDC_CLIENT_ID)"
+            echo "OIDC_GROUP_NAMES=$(env_value OIDC_GROUP_NAMES)"
+            echo "OIDC_METADATA_URL=$(env_value OIDC_METADATA_URL)"
+            echo "ACR_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query '[0].loginServer' -o tsv)"
+          } >> "$GITHUB_ENV"
+
+      - name: Work out the image and the template parameters
+        run: |
+          set -euo pipefail
+          test -n "$OIDC_CLIENT_ID" && test -n "$ACR_SERVER"
+          TENANT_ID="$(printf '%s' "$OIDC_METADATA_URL" | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -1)"
+          IMAGE="$ACR_SERVER/leyline:${GITHUB_SHA::12}"
+          # A new database password every run (like deploy.ps1); masked, kept only in a file on this
+          # throwaway runner, and the apps are restarted below so they pick it up.
+          PGPASS="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)"
+          echo "::add-mask::$PGPASS"
+          jq -n --arg pw "$PGPASS" --arg image "$IMAGE" --arg cid "$OIDC_CLIENT_ID" --arg tid "$TENANT_ID" \
+            --arg groups "$OIDC_GROUP_NAMES" --arg location "$LOCATION" \
+            '{"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+              contentVersion:"1.0.0.0",
+              parameters:{
+                location:{value:$location}, appResourceGroupName:{value:"rg-leyline-app"},
+                postgresAdminPassword:{value:$pw}, deployApps:{value:true}, appImage:{value:$image},
+                oidcClientId:{value:$cid}, oidcTenantId:{value:$tid}, oidcGroupNames:{value:$groups},
+                writeOidcSecret:{value:false}}}' > "$RUNNER_TEMP/params.json"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "Image: $IMAGE"
+
+      - name: Preview the changes (what-if)
+        run: |
+          set -euo pipefail
+          az deployment sub what-if --location "$LOCATION" --template-file infra/main.bicep \
+            --parameters "@$RUNNER_TEMP/params.json" --name "leyline-ci-whatif-${GITHUB_RUN_ID}"
+
+      - name: Build and push the image
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -euo pipefail
+          az acr login --name "${ACR_SERVER%%.*}"
+          docker build --tag "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Deploy the apps
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -euo pipefail
+          az deployment sub create --location "$LOCATION" --template-file infra/main.bicep \
+            --parameters "@$RUNNER_TEMP/params.json" --name "leyline-ci-${GITHUB_RUN_ID}" --output none
+
+      - name: Run the database migrations
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -euo pipefail
+          wait_for_job() {
+            for _ in $(seq 1 60); do
+              sleep 10
+              status="$(az containerapp job execution list -n "$1" -g "$RESOURCE_GROUP" --query '[0].properties.status' -o tsv)"
+              case "$status" in Succeeded) return 0 ;; Failed|Stopped) return 1 ;; esac
+            done
+            return 1
+          }
+          # The job's own command is the migration (no override: az would mis-split '-m').
+          az containerapp job start -n leyline-task -g "$RESOURCE_GROUP" --output none
+          wait_for_job leyline-task || { echo "::error::The migration job did not succeed. See docs/RUNBOOKS.md section 5."; exit 1; }
+          if [ "$INPUT_SEED" = "true" ]; then
+            az containerapp job start -n leyline-seed -g "$RESOURCE_GROUP" --output none
+            wait_for_job leyline-seed || { echo "::error::The seed job did not succeed."; exit 1; }
+          fi
+
+      - name: Restart the apps (they pick up the new secrets) and wait for readiness
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -euo pipefail
+          for app in leyline-web leyline-worker; do
+            revision="$(az containerapp revision list -n "$app" -g "$RESOURCE_GROUP" --query '[0].name' -o tsv)"
+            az containerapp revision restart -n "$app" -g "$RESOURCE_GROUP" --revision "$revision" --output none
+          done
+          fqdn="$(az containerapp show -n leyline-web -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+          for attempt in $(seq 1 30); do
+            sleep 10
+            if curl -fsS "https://$fqdn/readyz" | jq -e '.status == "ready"' >/dev/null 2>&1; then
+              echo "Ready after attempt $attempt."
+              {
+                echo "### Deployed"
+                echo "- Image: \`$IMAGE\`"
+                echo "- Site: https://$fqdn"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "::error::The site did not become ready. See docs/RUNBOOKS.md section 2."
+          exit 1

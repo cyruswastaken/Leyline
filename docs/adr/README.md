@@ -16,3 +16,4 @@ Format: **Status**, **Context**, **Decision**, **Consequences**, **Alternatives 
 | [0006](0006-disposable-environment-with-scripted-deploy.md) | A disposable environment with a scripted, repeatable deploy | Accepted |
 | [0007](0007-calibrate-retrieval-per-embedding-model.md) | Retrieval floors are calibrated and gated per embedding model | Accepted |
 | [0008](0008-no-inline-code-and-no-markup-from-data.md) | No inline code and no markup built from data | Accepted |
+| [0009](0009-ci-deploys-updates-only-with-a-narrow-identity.md) | CI deploys updates only, started by hand, with a narrow identity | Accepted, not yet run |

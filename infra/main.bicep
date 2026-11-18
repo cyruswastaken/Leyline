@@ -43,6 +43,8 @@ param oidcClientId string = ''
 param oidcTenantId string = ''
 @secure()
 param oidcClientSecret string = ''
+@description('Write the Entra client secret into Key Vault. The CI update deploy sets this to false so it never needs the secret and leaves the stored one untouched.')
+param writeOidcSecret bool = true
 @description('JSON object mapping Entra group object ids to the group names documents use, from infra/entra.ps1. Object ids are identifiers, not secrets.')
 param oidcGroupNames string = '{}'
 
@@ -116,7 +118,7 @@ module secrets 'modules/secrets.bicep' = {
     postgresAdminPassword: postgresAdminPassword
     openAiKey: openaiKey.outputs.apiKey
     oidcClientSecret: oidcClientSecret
-    includeOidcSecret: deployApps
+    includeOidcSecret: deployApps && writeOidcSecret
   }
 }
 

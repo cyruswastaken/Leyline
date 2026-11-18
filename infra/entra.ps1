@@ -36,6 +36,9 @@ param(
     # With -DemoUsers: also give demo users that already exist a new password (use it when the
     # password file is lost). Passwords go to the git-ignored file, never to the screen.
     [switch]$ResetPasswords,
+    # With -RedirectUri: drop other registered Azure sign-in addresses (the generated domain changes on
+    # every rebuild, so old ones are dead and should not stay registered). Local addresses are kept.
+    [switch]$PruneRedirects,
     [switch]$AssignMe,
     [switch]$NewSecret,
     [switch]$Remove,
@@ -185,6 +188,9 @@ if ($app) {
     # Keep the addresses that are already registered (for example the Azure one added by
     # deploy.ps1): replacing the list silently broke the Azure sign-in once.
     $registered = (Invoke-Graph GET "/applications/$($app.id)").web.redirectUris
+    if ($PruneRedirects -and $RedirectUri) {
+        $registered = @($registered | Where-Object { $_ -notlike 'https://leyline-web.*.azurecontainerapps.io/auth/callback' })
+    }
     $settings.web.redirectUris = @($registered) + @($redirects) | Where-Object { $_ } | Select-Object -Unique
     Step "update app registration $AppName (roles, redirect URIs, claims)" {
         # An existing role may only be re-sent unchanged; ours keep fixed ids.
