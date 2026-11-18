@@ -82,7 +82,7 @@ jobs:
       INPUT_ACTION: ${{ inputs.action }}
       INPUT_SEED: ${{ inputs.seed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Sign in to Azure (OIDC, no stored secret)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
