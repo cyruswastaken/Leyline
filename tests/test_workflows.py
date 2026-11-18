@@ -150,6 +150,9 @@ def test_the_template_has_the_switch_the_pipeline_relies_on():
 def test_the_identity_trusts_exactly_one_environment_of_this_repository():
     script = IDENTITY.read_text(encoding="utf-8")
     assert "environment:$EnvironmentName" in script
+    # the prefix comes from GitHub (it is by id when immutable subjects are on), and is validated
+    assert "actions/oidc/customization/sub" in script and "sub_claim_prefix" in script
+    assert "-notmatch '^repo:[A-Za-z0-9._@/-]+$'" in script
     assert "[string]$Repository = 'cyruswastaken/Leyline'" in script
     assert "[string]$EnvironmentName = 'azure'" in script
     assert "api://AzureADTokenExchange" in script

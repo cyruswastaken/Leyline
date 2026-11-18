@@ -92,7 +92,17 @@ if ($Repository -notmatch '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$') { throw 'Repository
 $subScope = "/subscriptions/$sub"
 $appScope = "$subScope/resourceGroups/$AppResourceGroup"
 $openAiScope = "$subScope/resourceGroups/$OpenAiResourceGroup/providers/Microsoft.CognitiveServices/accounts/$OpenAiAccount"
-$subject = "repo:$($Repository):environment:$EnvironmentName"
+# The subject GitHub puts in the token is the source of truth. Repositories that use immutable
+# subjects name the owner and repository by id (repo:owner@123/name@456), which survives a rename
+# and cannot be inherited by a different repository with the same name; GitHub tells us the prefix.
+$subjectPrefix = "repo:$Repository"
+try {
+    $customisation = (& gh api "repos/$Repository/actions/oidc/customization/sub") | ConvertFrom-Json
+    if ($customisation.sub_claim_prefix) { $subjectPrefix = [string]$customisation.sub_claim_prefix }
+}
+catch { throw "Could not read the repository's OIDC subject settings with gh ($($_.Exception.Message)). Run: gh auth login" }
+if ($subjectPrefix -notmatch '^repo:[A-Za-z0-9._@/-]+$') { throw "Unexpected OIDC subject prefix: $subjectPrefix" }
+$subject = "$($subjectPrefix):environment:$EnvironmentName"
 Write-Host "Subscription: $sub  Repository: $Repository  Environment: $EnvironmentName"
 
 $starterName = 'Leyline Deployment Starter'

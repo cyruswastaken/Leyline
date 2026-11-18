@@ -16,7 +16,10 @@ privilege than updating the apps.
   that exact commit. The default action is `preview` (Azure's what-if); `deploy` is a deliberate choice.
 - The `azure` GitHub environment requires an approval by a named reviewer and accepts only `main`.
 - The workflow signs in with **OIDC federation**: no Azure password, key or secret is stored in GitHub. The
-  identity's federated credential trusts exactly one subject, `repo:<owner>/<repo>:environment:azure`.
+  identity's federated credential trusts exactly one subject: this repository's `environment:azure`. The
+  repository uses GitHub's immutable subjects, so the subject names owner and repository by id
+  (`repo:<owner>@<id>/<repo>@<id>:environment:azure`); `ci-identity.ps1` reads the prefix from GitHub. (The
+  first run failed with AADSTS700213 because the credential had been created from the plain names.)
 - The identity's rights are narrow (set by `infra/ci-identity.ps1`): a custom subscription role that can start
   and read deployments and create or update resource groups but not delete; a custom role on `rg-leyline-app`
   that is Contributor without deleting the group and without writing role assignments; role-assignment rights
