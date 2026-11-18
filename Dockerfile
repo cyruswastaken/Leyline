@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- frontend stage: compile the UI (Node never reaches the final image) -------
-FROM node:22-slim AS frontend
+FROM node:26-slim AS frontend
 
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
