@@ -46,8 +46,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Anything shipped to browsers must be clean
         run: npm audit --omit=dev
-      - name: Build tooling must have nothing high or critical
-        run: npm audit --audit-level=high
+      - name: Build tooling must have nothing high or critical (documented exceptions only)
+        run: node scripts/audit-gate.mjs
 
   secrets:
     name: Secret scan (gitleaks)

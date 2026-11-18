@@ -136,7 +136,20 @@ class Stack:
         auditor = self.sessions["ada.auditor"]
 
         def events() -> list[dict]:
-            return auditor.get(f"{APP}/monitoring/events", timeout=15).json()
+            # The per-IP limit applies to this script too: wait out the window
+            # on a 429, and report anything else instead of a confusing TypeError.
+            for attempt in range(8):
+                response = auditor.get(f"{APP}/monitoring/events", timeout=15)
+                if response.status_code != 429 or attempt == 7:
+                    break
+                time.sleep(10)
+            body = response.json() if response.content else None
+            if response.status_code != 200 or not isinstance(body, list):
+                raise Failure(
+                    f"FAIL: monitoring events returned {response.status_code}: "
+                    f"{str(body)[:200]}"
+                )
+            return body
 
         before = max((e["timestamp"] for e in events()), default="")
         self.post(username, "/chat", json={"message": question})
