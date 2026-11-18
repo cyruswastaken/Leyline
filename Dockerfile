@@ -12,7 +12,7 @@ COPY src/leyline/templates /src/leyline/templates
 RUN npm run build
 
 # ---- build stage: resolve and build wheels --------------------------------
-FROM python:3.13-slim AS build
+FROM python:3.15-slim AS build
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -29,7 +29,7 @@ COPY --from=frontend /src/leyline/static/dist ./src/leyline/static/dist
 RUN /opt/venv/bin/pip install --no-deps .
 
 # ---- rootfs stage: assemble exactly what will ship ----------------------------
-FROM python:3.13-slim AS rootfs
+FROM python:3.15-slim AS rootfs
 
 # Security updates for OS packages the base image has not picked up yet, and no
 # package manager at runtime: the app never installs anything, and pip's
