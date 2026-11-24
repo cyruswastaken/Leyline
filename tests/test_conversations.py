@@ -205,6 +205,35 @@ def test_a_follow_up_is_rewritten_from_the_users_own_earlier_questions_only(
     assert model.stream_calls[1][1].count("and where is that?") >= 1
 
 
+def test_a_follow_up_that_stands_alone_skips_the_rewrite_call(make_client, add_doc):
+    add_doc(*PORTAL_DOC)
+    model = FakeChatModel(rewrite="should not be used")
+    client = make_client(model)
+    _, first = stream(client, "employee", "How do I reset my password?")
+    conversation_id = first[0][1]["conversation_id"]
+
+    _, second = stream(
+        client, "employee", "How do I get a guest into the building?", conversation_id
+    )
+
+    assert model.complete_calls == []  # no model round trip before retrieval
+    assert second[-1][0] == "done"
+
+
+def test_rewrite_mode_always_rewrites_even_a_standalone_follow_up(make_client, add_doc):
+    add_doc(*PORTAL_DOC)
+    model = FakeChatModel(rewrite="reset my password in the portal")
+    client = make_client(model, rewrite_mode="always")
+    _, first = stream(client, "employee", "How do I reset my password?")
+    stream(
+        client,
+        "employee",
+        "How do I get a guest into the building?",
+        first[0][1]["conversation_id"],
+    )
+    assert len(model.complete_calls) == 1
+
+
 def test_the_first_turn_is_never_rewritten(client, add_doc, model):
     add_doc(*PORTAL_DOC)
     stream(client, "employee", "How do I reset my password?")

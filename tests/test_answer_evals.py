@@ -39,6 +39,41 @@ def test_invented_figures_are_found_but_citations_and_numbering_are_not_figures(
     assert unsupported_numbers("You get 25 days [1].", context) == []
 
 
+def test_figures_written_as_words_in_the_sources_support_digits_in_the_answer():
+    context = "Each mailbox holds fifty gigabytes. Leave is twenty-five days; notice is fourteen days."
+    assert unsupported_numbers("It holds 50 gigabytes [1].", context) == []
+    assert (
+        unsupported_numbers("25 days of leave and 14 days notice [1].", context) == []
+    )
+    # a wrong digit is still caught, whether or not the sources spell numbers out
+    assert unsupported_numbers("It holds 500 gigabytes [1].", context) == ["500"]
+    assert unsupported_numbers("Leave is 24 days [1].", context) == ["24"]
+
+
+def test_a_figure_the_user_typed_and_the_answer_repeats_is_not_invented():
+    context = "Purchases up to twenty thousand need the finance director."
+    question = "Who has to approve a purchase of fifteen thousand?"
+    answer = "A purchase of fifteen thousand needs the finance director [1]."
+    assert unsupported_numbers(answer, context) == ["15"]  # without the question
+    assert unsupported_numbers(answer, context, question) == []
+    assert (
+        unsupported_numbers("Is 12 fine? Yes, 12 is fine [1].", context, "Is 12 fine?")
+        == []
+    )
+    # a figure that is neither in the sources nor in the question is still caught
+    assert unsupported_numbers("It costs 99 [1].", context, question) == ["99"]
+
+
+def test_spelling_out_an_invented_figure_does_not_hide_it():
+    context = "You get 25 days of leave."
+    assert unsupported_numbers("You get forty days [1].", context) == ["40"]
+    assert unsupported_numbers("You get twenty-five days [1].", context) == []
+    # ordinary small words are prose, not figures
+    assert (
+        unsupported_numbers("Follow these two steps, then one more [1].", context) == []
+    )
+
+
 # --- end to end over a tiny corpus ------------------------------------------------------
 
 

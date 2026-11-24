@@ -17,6 +17,7 @@ from __future__ import annotations
 import html
 import itertools
 import json
+import os
 import re
 import socket
 import time
@@ -53,8 +54,15 @@ TARGETS = {
 MAX_FAILURE_RATIO = 0.01
 
 
+# Seconds a virtual user waits between actions. The default (1 to 3) saturates a local
+# fake model; against a real model with a requests-per-minute quota, set a longer pause,
+# for example LOADTEST_WAIT_MIN=10 LOADTEST_WAIT_MAX=20 (see docs/LOAD_TEST.md).
+WAIT_MIN = float(os.environ.get("LOADTEST_WAIT_MIN", "1"))
+WAIT_MAX = float(os.environ.get("LOADTEST_WAIT_MAX", "3"))
+
+
 class Leyline(HttpUser):
-    wait_time = between(1, 3)
+    wait_time = between(WAIT_MIN, WAIT_MAX)
 
     def on_start(self) -> None:
         self.username = next(_next_user)
@@ -97,6 +105,10 @@ class Leyline(HttpUser):
             self.conversation_id = None
         question = QUESTIONS[(self.turns + len(self.username)) % len(QUESTIONS)]
         self.turns += 1
+        # A follow-up in an open conversation first asks the model to rewrite the
+        # question into a standalone search query, so it waits for two model calls in
+        # a row. Record the two cases separately as well as together.
+        kind = "follow-up" if self.conversation_id else "new"
         started = time.perf_counter()
         first_token_at: float | None = None
         outcome = "no done event"
@@ -122,6 +134,7 @@ class Leyline(HttpUser):
                     elif event == "delta" and first_token_at is None:
                         first_token_at = time.perf_counter()
                         self._record("first_token", started)
+                        self._record(f"first_token ({kind})", started)
                     elif event == "done":
                         outcome = "ok"
                     elif event == "error":
@@ -130,9 +143,9 @@ class Leyline(HttpUser):
                 response.success()
             else:
                 response.failure(outcome)
-        self._record(
-            "turn_total", started, None if outcome == "ok" else RuntimeError(outcome)
-        )
+        failure = None if outcome == "ok" else RuntimeError(outcome)
+        self._record("turn_total", started, failure)
+        self._record(f"turn_total ({kind})", started, failure)
 
     @task(3)
     def browse(self) -> None:

@@ -32,6 +32,7 @@ from leyline.services.llm import (
     stream_answer,
 )
 from leyline.services.logger import log_security_event
+from leyline.services.rewrite_policy import needs_rewrite
 
 NO_ANSWER = "I couldn't find relevant information in the available knowledge base."
 MODEL_UNAVAILABLE = (
@@ -105,11 +106,18 @@ def _standalone_query(
     history: list[str],
     model: ChatModel | None,
     user_id: str,
-) -> str:
+    *,
+    rewrite_mode: str = "auto",
+) -> tuple[str, bool]:
     """Rewrite a follow-up so retrieval can understand it. Any failure falls
-    back to the user's own words; the rewrite never needs to succeed."""
+    back to the user's own words; the rewrite never needs to succeed.
+
+    Returns the query and whether a rewrite was skipped because the question
+    already stands alone (``rewrite_mode="auto"``), which saves a model call."""
     if not history or model is None:
-        return message
+        return message, False
+    if rewrite_mode == "auto" and not needs_rewrite(message):
+        return message, True
     try:
         with telemetry.stage("rewrite"):
             rewritten = rewrite_query(history, message, model=model)
@@ -120,8 +128,8 @@ def _standalone_query(
             status_code=200,
             reason=f"rewrite_{exc.reason}",
         )
-        return message
-    return rewritten[:500] or message
+        return message, False
+    return rewritten[:500] or message, False
 
 
 def retrieve(
@@ -141,7 +149,9 @@ def retrieve(
     History is the user's own earlier questions (never assistant text).
     """
     user_id = principal.user_id
-    query = _standalone_query(message, history, model, user_id)
+    query, rewrite_skipped = _standalone_query(
+        message, history, model, user_id, rewrite_mode=settings.rewrite_mode
+    )
 
     started = time.perf_counter()
     with telemetry.stage("retrieve"):
@@ -164,6 +174,7 @@ def retrieve(
             "returned_count": len(hits),
             "candidate_count": len(candidates),
             "rewritten": query != message,
+            "rewrite_skipped": rewrite_skipped,
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         },
     )

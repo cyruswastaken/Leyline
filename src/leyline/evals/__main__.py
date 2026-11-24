@@ -37,6 +37,12 @@ from leyline.evals.embeddings import (
     RecordingEmbedder,
     ReplayEmbedder,
 )
+from leyline.evals.followups import (
+    FollowupReport,
+    format_followups,
+    load_followups,
+    run_followups,
+)
 from leyline.evals.golden import GoldenCase, GoldenError, load_acl_oracle, load_golden
 from leyline.evals.runner import (
     DEFAULT_LIMIT,
@@ -59,6 +65,7 @@ from leyline.worker import run_worker
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GOLDEN = REPO_ROOT / "evals" / "golden.jsonl"
+DEFAULT_FOLLOWUPS = REPO_ROOT / "evals" / "followups.jsonl"
 INDEXES = ("fts", "hybrid")
 SWEEP_SIMILARITY = (0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7)
 SWEEP_LEXICAL = (0.0, 0.2, 0.4, 0.8)
@@ -232,6 +239,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check", type=Path, default=None, help="thresholds to enforce"
     )
+    parser.add_argument(
+        "--followups",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_FOLLOWUPS,
+        default=None,
+        help="also evaluate follow-up questions (default file: evals/followups.jsonl)",
+    )
     args = parser.parse_args(argv)
 
     if args.embeddings and args.record_embeddings:
@@ -246,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     recorder: RecordingEmbedder | None = None
+    followup_report: FollowupReport | None = None
     try:
         embedder, recorder = choose_embedder(args, settings)
         if args.index == "hybrid" and embedder is None:
@@ -303,6 +319,19 @@ def main(argv: list[str] | None = None) -> int:
                 acl=acl,
                 limit=args.limit,
             )
+            if args.followups:
+                try:
+                    followup_cases = load_followups(args.followups, acl)
+                except GoldenError as exc:
+                    print(f"follow-up set error: {exc}", file=sys.stderr)
+                    return 2
+                followup_report = run_followups(
+                    build_search(args.index, database, embedder, options),
+                    followup_cases,
+                    refs=refs,
+                    acl=acl,
+                    limit=args.limit,
+                )
             sweep_rows = (
                 _sweep(
                     args.index,
@@ -327,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
         recorder.cache.save(args.record_embeddings)
         print(f"recorded {len(recorder.cache)} embeddings -> {args.record_embeddings}")
 
-    return _report(args, options, report, sweep_rows)
+    return _report(args, options, report, sweep_rows, followup_report)
 
 
 def _report(
@@ -335,6 +364,7 @@ def _report(
     options: SearchOptions,
     report: EvalReport,
     sweep_rows: list[dict[str, float]],
+    followup_report: FollowupReport | None = None,
 ) -> int:
     print(
         f"index: {args.index}   limit: {args.limit} chunks/question   "
@@ -370,11 +400,20 @@ def _report(
     if report.summary["acl_leaks"] > 0:
         print("\nFAIL: ACL leaks found", file=sys.stderr)
         exit_code = 1
+    if followup_report is not None:
+        print("\n" + format_followups(followup_report))
+        if followup_report.summary["acl_leaks"] > 0:
+            print("\nFAIL: ACL leaks found in follow-ups", file=sys.stderr)
+            exit_code = 1
     if args.check:
-        thresholds = json.loads(args.check.read_text(encoding="utf-8")).get(
-            args.index, {}
-        )
+        everything = json.loads(args.check.read_text(encoding="utf-8"))
+        thresholds = everything.get(args.index, {})
         problems = check_thresholds(report.summary, thresholds)
+        if followup_report is not None:
+            problems += check_thresholds(
+                followup_report.summary,
+                everything.get("followups", {}).get(args.index, {}),
+            )
         for problem in problems:
             print(f"FAIL: {problem}", file=sys.stderr)
         if problems:

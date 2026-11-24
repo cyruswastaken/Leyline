@@ -91,6 +91,36 @@ the forbidden text was never shown to the model. A larger model (OpenAI, Azure O
 to improve citation behaviour; re-run this after changing the model, the prompt or the context
 format, and record the numbers. Retrieval and ACL safety stay CI-gated.
 
+Result with `gpt-5.4-mini` (Azure OpenAI) and `text-embedding-3-small` (768 dimensions, no prefixes), hybrid
+retrieval with the Azure floors (0.37 / 0.60), the same 78 questions, 2026-11-19, no model errors:
+
+| answered | cites a source | cites expected doc | figures supported | refused | restricted pass | ACL leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.963 | 1.000 | 1.000 | 0.981 | 1.000 | 1.000 | 0 |
+
+How to read it against the 3B run: every answer cites a source and a correct one (0.833 and 0.778 before),
+every unanswerable question is refused, the restricted questions all pass, and nothing forbidden reached the
+model. Two answerable questions were refused (a024, client-meal limit; a046, network segmentation); in both the
+model said the documents do not give the detail asked for, which is the cautious reading, not an invented
+answer.
+
+"Figures supported" first scored 0.870 on this model. That was a flaw in the metric, not invented numbers: it
+compared digits only, the corpus spells numbers as words ("fifty gigabytes", "twenty-five days"), and this model
+writes digits. All seven flagged answers (a001, a010, a011, a018, a020, a025, a031) stated a figure that is in the
+cited document as a word; the 3B model copied the words, so it scored higher. The check now treats a figure
+written as a word in the sources as support for the same digits, and counts words for ten and above in an answer
+as figures, so spelling out an invented number does not hide it (tests in `tests/test_answer_evals.py`). With
+that, a new run of the same 78 questions scores 0.981, level with the 3B model's figure (which was measured
+before the fix and has not been re-scored).
+
+The one remaining case (a051) repeats the figure from the user's own question ("fifteen thousand"); the
+source only says "up to twenty thousand". The metric compares with the sources alone, so a figure the user
+stated and the answer repeats counts as unsupported. It is not an invented number, and the metric does not yet
+exempt the question's own figures (the same was true for digits before).
+
+The run was made against a throwaway local database (`leyline_evals`, loaded with the Azure embedding model)
+and the Azure chat deployment, so it measures the model and the prompt, not the deployed database.
+
 ## Running it
 
 ```powershell

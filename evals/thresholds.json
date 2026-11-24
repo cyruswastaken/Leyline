@@ -25,5 +25,19 @@
     "max": {
       "acl_leaks": 0
     }
+  },
+  "followups": {
+    "_comment": "30 two-turn conversations (evals/followups.jsonl, 2026-11-24). Measured hybrid: policy recall@5 0.964, mrr 0.884, 40% of rewrites skipped. The policy must keep the ideal rewrite's recall while skipping rewrites.",
+    "hybrid": {
+      "min": {
+        "policy_recall@5": 0.93,
+        "policy_mrr": 0.85,
+        "skip_rate": 0.35,
+        "restricted_pass_rate": 1.0
+      },
+      "max": {
+        "acl_leaks": 0
+      }
+    }
   }
 }

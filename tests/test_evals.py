@@ -488,6 +488,34 @@ def test_the_hybrid_gate_catches_a_broken_permission_filter(hybrid_corpus, monke
     assert report.summary["restricted_pass_rate"] < 1.0
 
 
+def test_skipping_the_rewrite_keeps_follow_up_recall_and_never_leaks(hybrid_corpus):
+    from leyline.evals.followups import format_followups, load_followups, run_followups
+
+    db, embedder, settings = hybrid_corpus
+    oracle = load_acl_oracle(CORPUS)
+    index = PostgresSearchIndex(
+        db,
+        embedder,
+        dataclasses.replace(
+            SearchOptions.from_settings(settings), strict_embedding=True
+        ),
+    )
+    report = run_followups(
+        index,
+        load_followups(ROOT / "evals" / "followups.jsonl", oracle),
+        refs=evals_cli.document_refs(db),
+        acl=oracle,
+    )
+
+    s = report.summary
+    floors = json.loads(THRESHOLDS.read_text(encoding="utf-8"))["followups"]["hybrid"]
+    assert s["acl_leaks"] == 0
+    assert check_thresholds(s, floors) == [], format_followups(report)
+    # the point of the policy: nearly the ideal rewrite's recall without the model call
+    assert s["policy_recall@5"] >= s["always_recall@5"] - 0.04
+    assert s["policy_recall@5"] > s["never_recall@5"] - 1e-9
+
+
 def test_the_committed_cache_is_for_the_expected_model_and_size():
     cache = EmbeddingCache.load(EMBEDDINGS)
     assert cache.model == "nomic-embed-text"

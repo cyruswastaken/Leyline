@@ -1,6 +1,6 @@
 # Azure Deployment
 
-Leyline runs on **Azure Container Apps** with PostgreSQL (pgvector) as the search index, Azure Managed Redis, Blob Storage, Key Vault, Azure OpenAI, Microsoft Entra ID for sign-in and Log Analytics. Everything is Bicep in `infra/`; nothing has been deployed yet.
+Leyline runs on **Azure Container Apps** with PostgreSQL (pgvector) as the search index, Azure Managed Redis, Blob Storage, Key Vault, Azure OpenAI, Microsoft Entra ID for sign-in and Log Analytics. Everything is Bicep in `infra/`. It has been deployed, rebuilt from an empty resource group, updated through the CI workflow, and checked with real Entra sign-in and the Azure evals (see the Phase 8 notes in the [roadmap](ROADMAP.md)).
 
 Updates can also be shipped from GitHub with the **Deploy to Azure** workflow (manual, approved, update-only; [runbook section 14](RUNBOOKS.md#14-ship-a-change-from-github-the-deploy-workflow) and [decision 0009](adr/0009-ci-deploys-updates-only-with-a-narrow-identity.md)).
 
@@ -90,7 +90,7 @@ exists on the Azure for Students subscription and was read back to confirm all f
 7. Create Azure Database for PostgreSQL (allow-list the `vector` extension), Azure Cache for Redis and the Linux App Service. Run `python -m leyline.db upgrade` once, then deploy the web container and a second instance of the same image running `python -m leyline.worker`.
 8. Send diagnostic logs to Log Analytics and validate the security test matrix.
 
-A step-by-step, infrastructure-as-code deployment replaces the earlier portal walkthrough in Phase 8 of the [roadmap](ROADMAP.md). Nothing below has been deployed yet.
+This portal walkthrough is the **earlier, superseded plan** (App Service and Azure AI Search). It is not what was built: the deployment is the infrastructure-as-code one at the top of this page (Container Apps, Postgres with pgvector as the index). The settings table below is still accurate for the app's configuration; the deployed values come from `infra/modules/apps.bicep`.
 
 ## Application settings
 
@@ -121,7 +121,7 @@ The local Keycloak sign-in pages use the repository's `leyline` login theme. Wit
 
 ## Container
 
-The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI with the full sign-in flow against Keycloak. Entra-specific behavior (group overage, app roles) is not yet tested against a real tenant; that happens in Phase 8.
+The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI with the full sign-in flow against Keycloak. App roles and group-restricted answers have been checked against a real Entra tenant (Phase 8). Group overage (a user in too many groups) is detected and fails closed, but resolving it through Microsoft Graph is not built and has not been tested.
 
 ## Monitoring
 

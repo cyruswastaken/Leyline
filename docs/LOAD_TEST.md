@@ -66,3 +66,66 @@ What the runs showed:
 3. **Not yet tested:** more than 24 users, several container instances, a real model's latency, a
    long soak, and the database on separate hardware. The next capacity limit is the per-process
    database pool (10 connections per worker) and Postgres `max_connections`.
+
+## Results with the real model (2026-11-24)
+
+The fake model hides the part users feel most. This run uses the deployed models: chat `gpt-5.4-mini` and
+embeddings `text-embedding-3-small`, with the Azure floors (0.37 / 0.60), the sample corpus (49 documents, 138
+chunks), the same container image and the same Locust file, with a pause of 10 to 20 seconds between actions
+(`LOADTEST_WAIT_MIN`, `LOADTEST_WAIT_MAX`) so the users stay under the model deployment's quota. Everything ran
+on one laptop (the app, worker, Postgres, Redis and Keycloak in containers) against the Azure OpenAI account in
+Korea Central, on a throwaway database. No request failed in either run; the logs show no rate-limit errors,
+no circuit-breaker events and no rewrite fallbacks.
+
+| Run | Chat turns | `first_token` p50 / p95 | `turn_total` p50 / p95 | `GET /api/conversations` p95 | `GET /me` p95 |
+| --- | --- | --- | --- | --- | --- |
+| 4 users, 4 minutes | 37 | 3.2 s / **4.6 s** | 3.5 s / 4.9 s | 18 ms | 19 ms |
+| 8 users, 5 minutes | 87 | 2.8 s / **3.8 s** | 3.1 s / 4.0 s | 67 ms | 19 ms |
+
+The 8-user run split by kind of question:
+
+| | Turns | `first_token` p50 / p95 | `turn_total` p50 / p95 |
+| --- | --- | --- | --- |
+| New conversation | 32 | 2.3 s / 3.1 s | 2.6 s / 3.3 s |
+| Follow-up in an open conversation | 55 | 3.2 s / 4.0 s | 3.5 s / 4.3 s |
+
+**Against the targets:** `turn_total` (under 6 s), `GET /api/conversations` and `GET /me` are met. **`first_token`
+(under 2.5 s) is not met with the real model**, in either run and for both kinds of question. The target was set
+with the fake model; it is not changed here to fit these numbers (see the open question below).
+
+**Where the time goes.** Timed directly against Azure from the same laptop (12 calls each, a realistic prompt of
+about 550 tokens and an answer of about 45): the query embedding takes about 0.4 s (p95 0.5 s) and the chat
+model's first token about 1.0 s (p95 1.0 to 1.6 s). A follow-up adds a third step: the app first asks the model
+to rewrite the question into a standalone search query, so it waits for two model calls in a row. That is why
+follow-ups are about 0.9 s slower than new questions, and why most of a turn passes before the first word. The
+rest is Leyline's own work (search, database, the 96-character holdback), which stays small.
+
+**The deployment's own ceiling.** The `gpt-5.4-mini` deployment allows 50 requests and 50,000 tokens per minute
+for the whole app, and the embedding deployment has the same limits. A turn costs about 600 tokens per call, so
+requests bind first: counting the rewrite, a turn is about 1.7 model calls on average, which puts the ceiling near
+30 questions a minute for everyone together. The 8-user run held about 17 questions a minute with no throttling.
+The ceiling itself was **not** tested (that would need more users and would throttle the deployment).
+
+**What this does not show:**
+- It is the app on a laptop, not the deployed containers or the small B1ms database, and the sign-in was
+  Keycloak, not Entra. The deployed app sits in the same region as the model, so its model calls should be
+  faster than from a laptop; that is expected, not measured.
+- 8 users for 5 minutes, one container, a short run: no soak, no behaviour at the quota ceiling.
+- 37 and 87 turns are enough to see the shape, not to trust a 95th percentile to the nearest 100 ms.
+
+**Open question (needs a decision, not a tweak):** the first-token target. Options: keep 2.5 s and reduce the
+work before the first word (for example, skip the rewrite when a question already stands alone, which saves
+about a second on follow-ups; this changes retrieval behaviour, so it needs the retrieval and answer evals), or
+agree targets per kind of question from this baseline. Until one of those is done, the latency gate stays open.
+
+**Running it against a real model** (do not commit keys):
+1. Keep the key out of files: put it in the shell environment for the command only, and reference it from a
+   compose override kept outside the repository (chat and embedding base URL, model names, key, the Azure floors,
+   empty embedding prefixes, `EMBEDDING_SEND_DIMENSIONS=true`, `LLM_SEND_TEMPERATURE=false`, a throwaway
+   `DATABASE_URL`), listed after `loadtest/compose.loadtest.yaml`.
+2. Create and migrate a throwaway database, start the app and worker, run `python -m leyline.seed`, and wait for
+   every ingestion job to succeed.
+3. **Warm Keycloak first.** A cold Keycloak made the app's first calls time out and every sign-in return 503; a
+   45-second single-user run first avoids it.
+4. `LOADTEST_WAIT_MIN=10 LOADTEST_WAIT_MAX=20 locust ... -u 8`, then `docker compose down` so no container keeps the
+   key.

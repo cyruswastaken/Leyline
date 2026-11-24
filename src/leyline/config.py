@@ -144,6 +144,10 @@ class Settings(BaseSettings):
     llm_context_token_budget: int = Field(default=3000, gt=200)
     # How many of the user's earlier questions are used to rewrite a follow-up.
     chat_history_messages: int = Field(default=4, ge=0, le=20)
+    # "auto" rewrites a follow-up only when it cannot be searched as written
+    # (services/rewrite_policy.py); "always" rewrites every follow-up. Skipping
+    # the rewrite saves a model round trip of about a second before retrieval.
+    rewrite_mode: Literal["auto", "always"] = "auto"
     # Conversations idle longer than this are deleted for good; 0 keeps them.
     conversation_retention_days: int = Field(default=0, ge=0)
     # A message scoring at least this on injection signals is refused (403).

@@ -195,7 +195,7 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Phase 6 status: complete, with two deviations and one repository setting for you.** Delivered: append-only `security_events` in Postgres with a SQL-backed auditor dashboard (replacing the log file and `ast.literal_eval`), JSON events on stdout, OpenTelemetry traces and metrics (off by default; console or OTLP), system-prompt leak detection, a written [threat model](THREAT_MODEL.md) mapped to STRIDE and the OWASP LLM Top 10, a red-team suite (`tests/test_redteam.py`) built around a fully compromised model, a security workflow (pip-audit, gitleaks, Trivy image and config, CodeQL, ZAP baseline) plus Dependabot, a hardened single-layer container image that scans clean, and a Locust load test with defined targets ([LOAD_TEST.md](LOAD_TEST.md)). Notes:
 
-- **Scans block merges only once you mark them required** in the repository's branch protection (Settings > Branches); the workflow cannot do that itself. It has never run on GitHub; gitleaks, Trivy and pip-audit were run locally, CodeQL and ZAP were not.
+- **Scans block merges only once they are required** by a rule on the repository; the workflow cannot do that itself. (When written it had not yet run on GitHub; it has since, and is green on `main` as of 2026-11-19 after the Phase 8 fixes.) Since 2026-11-19 a ruleset on `main` requires all ten CI and Security jobs (see the Phase 8 notes below).
 - **Dashboard shape:** the page is unchanged; the SQL back end serves the same fields. A richer dashboard (time windows, charts) was not built.
 - **Cost** is not metered (tokens are estimates) and the load test measures the app with a fake model, not model capacity.
 
@@ -220,7 +220,7 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 ### Phase 8: Azure deployment (about 2 weeks, needs a subscription)
 
-**Status: in progress.** The infrastructure code is written, compiles without warnings and validates against the real subscription (`az deployment sub what-if` and `validate`: 23 resources, no errors). **Nothing has been deployed yet.** Decisions made with the user, and where they differ from the plan below:
+**Status: built, deployed and verified (2026-11-19); two production-grade gates remain open (see the scorecard below).** The environment is deployed from code, rebuilt from an empty resource group, updated by an approved CI workflow, and checked with the Azure-specific retrieval and answer evals. Decisions made with the user, and where they differ from the plan at the end of this section (that list is the original plan; the notes here are what was built):
 - **Subscription:** Azure for Students (about $100 credit, region policy: centralindia, eastasia, uaenorth, koreacentral, malaysiawest). Everything runs in **Korea Central**, next to the existing Azure OpenAI account `leyline-openai`.
 - **Container Apps instead of App Service** (web, worker and a manual task job from one image); **Postgres + pgvector stays the search index** (it already passes every ACL and retrieval gate; Azure AI Search's paid tiers would use most of the credit, and the `SearchIndex` port keeps it addable later).
 - **Models:** `gpt-5.4-mini` (chat) and `text-embedding-3-small` at 768 dimensions. The embedding change means the relevance floors must be re-swept and `evals/embeddings.json` re-recorded; no floor is lowered to pass.
@@ -234,7 +234,14 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 - **CI deploy workflow written (2026-11-11), NOT yet run on GitHub:** `.github/workflows/deploy.yml` (manual, `main` only, CI and Security must have passed on the commit, approval environment `azure`, OIDC with no stored secret, update-only: it refuses to create the environment and never touches Entra) and `infra/ci-identity.ps1` (the identity with narrow roles and the GitHub environment; **applied and read back on 2026-11-11**: app `Leyline CI Deploy` with no secret and one credential trusting only `repo:cyruswastaken/Leyline:environment:azure`, five role grants, GitHub environment `azure` with approval by the owner and `main` only; a second run created no duplicates). Also fixed the two failing Security jobs (gitleaks flagged two public Azure role ids; the Trivy action pin did not exist) and pinned third-party actions to commits. Decision record 0009; guard tests in `tests/test_workflows.py`.
 - **Fresh deploy from an empty resource group verified (2026-11-11):** teardown (about 24 minutes) then `deploy.ps1 -Seed` (about 17 minutes) recreated everything with no manual step: ready, standard mode, 49 documents indexed, sign-in address registered. Not repeated after the rebuild: a real sign-in and chat.
 - **Runbooks and decision records written (2026-11-11):** `docs/RUNBOOKS.md` (deploy, teardown, rebuild; the fixes for every failure seen) and `docs/adr/` (8 records). `tests/test_docs.py` checks that every command switch in the runbooks is real, links resolve and the records are complete and indexed.
-- **Still to do:** pass 2 and the sign-in test (then add the Azure redirect URI); re-recording embeddings; CI deploy workflow; runbooks.
+- **CI deploy workflow proven (2026-11-18/19):** the first run failed at Azure sign-in (AADSTS700213) because the repository uses immutable OIDC subjects (owner and repository by id) and the credential had been created from the names; `ci-identity.ps1` now reads the subject from GitHub. After that a preview and a real deploy both passed, and the live site was checked (`/readyz` ready, both apps on the new image, sign-in redirect correct).
+- **Pipeline fixes found by the first real runs:** the Security workflow now passes (gitleaks allowlist of two public role ids, Trivy pinned to a commit, a documented audit exception for one unpatched dev-tooling advisory, picomatch); the container smoke test's events helper retries on rate limits. 15 Dependabot PRs were triaged: 11 merged, 1 closed (TypeScript 7 fails the frontend checks), 3 held (SQLAlchemy 2.1, Node 26 and Python 3.15 images) until tested on the deployed runtime.
+- **Demo users and access (2026-11-19):** the seven Entra demo users were recreated and the role pages and group-restricted answers were checked by the user on the live site.
+- **Answer quality on Azure (2026-11-19, `docs/EVALUATION.md`):** gpt-5.4-mini answers 0.963, cites a source and an expected document 1.000, refuses unanswerable 1.000, restricted pass 1.000, ACL leaks 0, figures supported 0.981 (the metric now understands number words). Measured against a local database loaded with the Azure embedding model, not the deployed one.
+- **Full suite:** 1,294 tests pass, coverage 95% overall (`services/authorization.py` at 100%).
+- **Branch ruleset on `main` (2026-11-19):** before this, `main` had no protection and no rulesets, so the scans were not required checks and `main` could be force-pushed or deleted. The ruleset "main: no force-push, checks must pass" (id 27617185) blocks deletion and force-push and requires the ten CI and Security jobs before a pull request can merge. Repository admins can bypass it (the single maintainer commits straight to `main`), so direct pushes are not checked by it; the Deploy workflow's own gate (CI and Security must have passed on the exact commit) is the backstop. The required names were compared with the real job names. **Not yet seen blocking or allowing a live PR.**
+- **Open, by design or not yet done:** managed-identity access to Postgres, Redis, Blob and Azure OpenAI (keys still live in Key Vault; ADR 0004); first-token latency with the real model (measured, target missed: the one gate still open below); Playwright and axe in CI; three held Dependabot PRs.
+- **Original plan (kept for reference; the decisions above replace it where they differ):**
 - Bicep modules for App Service (container, web + worker on one plan), Postgres, Redis, Key Vault, Blob, AI Search, Azure OpenAI, Log Analytics, Application Insights.
 - Managed identity everywhere, with no stored keys. Entra app registration and group mapping including overage.
 - Azure AI Search adapter that must pass the Phase 3 contract suite and ACL evals.
@@ -246,13 +253,17 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 ## Production-grade gates
 
-- Zero ACL leaks in evals, as a hard CI gate.
-- Every route has allow and deny tests; coverage of at least 85%, and 100% of the authorization module.
-- No high or critical findings from scanners.
-- No secrets in code, config or images.
-- Agreed latency targets for first token and full response, met under load.
-- Deployment is repeatable from code, with tested rollback.
-- All security-relevant actions appear in the audit log.
+Scorecard, updated 2026-11-21. The "educational lab" wording stays until the one open gate (latency under load with a real model) is met.
+
+| Gate | State | Evidence |
+| --- | --- | --- |
+| Zero ACL leaks in evals, as a hard CI gate | **Met** | `acl_leaks` 0 in the CI retrieval gate, the Azure gate and both answer evals |
+| Every route has allow and deny tests; coverage at least 85%, 100% of the authorization module | **Met** | `tests/test_access_matrix.py`; 1,294 tests, 95% total, `services/authorization.py` 100% |
+| No high or critical findings from scanners | **Met, one documented exception** | Security workflow green (pip-audit, npm audit, CodeQL, gitleaks, Trivy, ZAP); `frontend/scripts/audit-gate.mjs` allows one unpatched dev-tooling advisory (picomatch), nothing shipped to browsers |
+| No secrets in code, config or images | **Met** | gitleaks over the full history; secrets only in Key Vault (`tests/test_infra.py`). Keys for Postgres, Redis, Blob and OpenAI still exist as Key Vault secrets (ADR 0004) |
+| Agreed latency targets for first token and full response, met under load | **Open** | Measured with the real model (2026-11-24, `docs/LOAD_TEST.md`, 4 and 8 users, 0 failures): whole turn p95 4.0 s (target 6 s, met), other endpoints met, but **first token p95 3.8 s against the 2.5 s target (missed)**. A follow-up waits for two model calls (rewrite, then answer). The target was set with a fake model and is deliberately not changed to fit; the next step is a decision (speed up follow-ups, or agree per-kind targets). Measured on a laptop against Azure OpenAI, not on the deployed containers |
+| Deployment is repeatable from code, with tested rollback | **Met for image-only changes** | Repeatable: rebuilt from an empty resource group (2026-11-11) and updated by the approved CI workflow. Rollback tested on the live environment (2026-11-21): web and worker back to an older image in 39 s and forward in 34 s, `/readyz` 200 on every probe (runbook section 15). Limits: migrations only go forward, so an image rollback is safe only while the schema is compatible; data written by a bad version is not undone |
+| All security-relevant actions appear in the audit log | **Met** | `audit_events` (append-only trigger), covered by the red-team and access-matrix tests |
 
 ## Verification
 

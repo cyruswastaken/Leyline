@@ -313,3 +313,44 @@ gone: run `./infra/ci-identity.ps1` again.
 | "The site did not become ready" | see section 2 | `./infra/logs.ps1 -App web -NoProbes -Errors` |
 
 To remove all of it: `./infra/ci-identity.ps1 -Remove`. (It is separate from `./infra/entra.ps1 -Remove`, which does not touch the CI identity.)
+
+## 15. Roll back a bad deploy
+
+Both apps run in **single-revision** mode, so there is no old revision to flip back to: rolling back means pointing
+the apps at an older **image**. Every deploy pushes an image tagged with the commit (or a timestamp, for
+`deploy.ps1`) and the registry keeps old tags, so any earlier build can be put back.
+
+**Preferred (goes through the gates):** revert the bad commit on `main`, wait for CI and Security, then run the
+Deploy workflow (section 14). Use the direct route below when the site is broken now and that would take too long.
+
+**Direct route (needs `az login` with rights on `rg-leyline-app`):**
+
+```powershell
+$acr = "leylineacrputrex"   # the registry in rg-leyline-app (az acr list -g rg-leyline-app --query [].name -o tsv)
+az acr repository show-tags -n $acr --repository leyline --orderby time_desc -o tsv     # pick the tag to go back to
+$image = "$acr.azurecr.io/leyline:<tag>"
+az containerapp update -g rg-leyline-app -n leyline-web --image $image
+az containerapp update -g rg-leyline-app -n leyline-worker --image $image
+curl https://<your-site>/readyz        # status "ready"
+az containerapp revision list -g rg-leyline-app -n leyline-web -o table   # new revision: Traffic 100, Healthy
+```
+
+**What was proven (2026-11-21, on the live environment):** web and worker went from `886516623acc` back to the
+older `20261111-102626` in 39 seconds and forward again in 34 seconds. `/readyz` was sampled every 3 seconds
+throughout and answered 200 every time (14 of 14 going back, 17 of 17 coming forward); on the older image
+`/welcome` and `/healthz` answered 200 and the sign-in redirect went to Entra. In single-revision mode Azure only
+moves traffic once the new revision is ready, so an image that fails its checks does not take the site down: the
+old revision keeps serving. The worker briefly runs two revisions side by side while the old one drains.
+
+**Limits (read before relying on it):**
+- **Migrations only go forward.** An image rollback is safe only while the database schema is one the older image
+  understands. The two images tested share schema 0005. If a bad release included a migration, restore through a
+  fix-forward migration, not by running the older image against the newer schema.
+- **Data is not rolled back:** documents, conversations and tickets written by the bad version stay. Rolling back
+  does not undo anything it already did to data.
+- **Only tags still in the registry can be used.** There is no purge policy today; if one is added, keep the last
+  known-good tags.
+- **Configuration is part of the template, not the image.** A bad environment-variable or secret change is undone
+  by redeploying the previous template (`./infra/deploy.ps1` from the previous commit), not by changing the image.
+- The Deploy workflow cannot deploy an old image (it always builds the commit it was started from); that is why the
+  direct route exists.

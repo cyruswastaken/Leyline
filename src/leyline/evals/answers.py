@@ -60,13 +60,79 @@ def is_refusal(answer: str) -> bool:
     return answer.strip() == NO_ANSWER or bool(_REFUSAL.search(answer))
 
 
-def unsupported_numbers(answer: str, context: str) -> list[str]:
-    """Figures in the answer that appear nowhere in the sources (citation
-    markers like ``[2]`` and list numbering are not figures)."""
+_UNITS = {
+    w: i
+    for i, w in enumerate(
+        ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine"),
+        start=1,
+    )
+}
+_TEENS = {
+    w: 10 + i
+    for i, w in enumerate(
+        (
+            "ten",
+            "eleven",
+            "twelve",
+            "thirteen",
+            "fourteen",
+            "fifteen",
+            "sixteen",
+            "seventeen",
+            "eighteen",
+            "nineteen",
+        )
+    )
+}
+_TENS = {
+    w: 20 + 10 * i
+    for i, w in enumerate(
+        ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+    )
+}
+_WORD_NUMBER = re.compile(
+    r"\b(?:(" + "|".join(_TENS) + r")(?:[- ](" + "|".join(_UNITS) + r"))?"
+    r"|(" + "|".join(_TEENS) + r")"
+    r"|(" + "|".join(_UNITS) + r"))\b",
+    re.I,
+)
+
+
+def _spelled_numbers(text: str, *, smallest: int) -> set[str]:
+    """Numbers written as words ("fifty", "twenty-five", "fourteen") as digit strings.
+
+    The sample corpus spells figures out while models usually write digits, so a
+    digit-only comparison calls correct answers unsupported. ``smallest`` keeps
+    ordinary prose out ("in two steps" is not a figure when checking an answer).
+    """
+    found: set[str] = set()
+    for tens, unit, teen, single in _WORD_NUMBER.findall(text.lower()):
+        if tens:
+            value = _TENS[tens] + (_UNITS[unit] if unit else 0)
+        elif teen:
+            value = _TEENS[teen]
+        else:
+            value = _UNITS[single]
+        if value >= smallest:
+            found.add(str(value))
+    return found
+
+
+def unsupported_numbers(answer: str, context: str, question: str = "") -> list[str]:
+    """Figures in the answer that appear nowhere in the sources or in the user's
+    own question (citation markers like ``[2]`` and list numbering are not figures).
+
+    A figure counts as supported when the sources give it as digits or as words.
+    A figure the user typed and the answer repeats ("a purchase of fifteen
+    thousand") is not an invented number, so the question's figures count as known
+    too. In the answer, words for ten and above also count as figures, so spelling
+    out an invented number does not hide it."""
     body = re.sub(r"\[\d{1,2}\]", "", answer)
     body = re.sub(r"(?m)^\s*\d+[.)]\s+", "", body)
-    known = set(_NUMBER.findall(context))
-    return sorted({n for n in _NUMBER.findall(body) if n not in known})
+    known = set(_NUMBER.findall(context)) | _spelled_numbers(context, smallest=1)
+    known |= set(_NUMBER.findall(question)) | _spelled_numbers(question, smallest=1)
+    stated = set(_NUMBER.findall(body)) | _spelled_numbers(body, smallest=10)
+    return sorted(n for n in stated if n not in known)
 
 
 @dataclass
@@ -178,7 +244,7 @@ def run_answer_eval(
             refs.get(uuid.UUID(c["document_id"]), "?") for c in citations if c["cited"]
         ]
         result.refused = is_refusal(text)
-        result.unsupported = unsupported_numbers(text, prepared.context)
+        result.unsupported = unsupported_numbers(text, prepared.context, case.question)
         if case.kind == "restricted":
             named = [
                 ref
