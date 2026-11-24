@@ -27,7 +27,7 @@ dependencies = [
     "requests>=2.32,<3",
     "opentelemetry-api>=1.27,<2",
     "opentelemetry-sdk>=1.27,<2",
-    "gunicorn>=23; sys_platform != 'win32'",
+    "gunicorn>=27.0.1; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]
