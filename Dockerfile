@@ -35,7 +35,7 @@ FROM python:3.13-slim AS rootfs
 # package manager at runtime: the app never installs anything, and pip's
 # vendored libraries would only add attack surface (and scanner findings).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
+ && apt-get install -y --no-install-recommends --only-upgrade zlib1g libzstd1 \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system --gid 10001 leyline \
  && useradd --system --uid 10001 --gid leyline --no-create-home leyline \
