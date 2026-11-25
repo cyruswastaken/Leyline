@@ -25,6 +25,7 @@ from leyline.extensions import (
     INGESTION_KEY,
     RATE_LIMITER_KEY,
     REDIS_KEY,
+    RERANKER_KEY,
     SEARCH_KEY,
     SETTINGS_KEY,
     TICKETS_KEY,
@@ -35,11 +36,13 @@ from leyline.ingestion.service import IngestionService
 from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
 from leyline.ports.llm import ChatModel
+from leyline.ports.rerank import Reranker
 from leyline.ports.search import SearchIndex
 from leyline.ratelimit import RedisRateLimiter
 from leyline.security_headers import init_security_headers
 from leyline.services.conversations import ConversationService
-from leyline.services.logger import log_security_event, set_event_sink
+from leyline.services.event_queue import QueuedEventSink
+from leyline.services.logger import EventSink, log_security_event, set_event_sink
 from leyline.services.monitoring import DatabaseEventSink
 from leyline.telemetry import configure_telemetry, http_request
 from leyline.wiring import (
@@ -47,6 +50,8 @@ from leyline.wiring import (
     build_chat_model,
     build_database,
     build_embedder,
+    build_redis,
+    build_reranker,
     build_search_index,
 )
 
@@ -68,6 +73,7 @@ def create_app(
     embedder: Embedder | None = None,
     search_index: SearchIndex | None = None,
     chat_model: ChatModel | None = None,
+    reranker: Reranker | None = None,
 ) -> Flask:
     """Build the application. Collaborators default to ones built from
     settings; tests inject their own."""
@@ -86,13 +92,7 @@ def create_app(
             app.wsgi_app, x_for=count, x_proto=count, x_host=count
         )
 
-    client = redis_client or Redis.from_url(
-        settings.redis_url,
-        decode_responses=True,
-        socket_connect_timeout=2,
-        socket_timeout=2,
-        health_check_interval=30,
-    )
+    client = redis_client or build_redis(settings)
     limiter = RedisRateLimiter(client)
 
     app.extensions[SETTINGS_KEY] = settings
@@ -107,13 +107,17 @@ def create_app(
     app.extensions[DATABASE_KEY] = database
     # Events are stored durably when a real database is configured; tests that
     # pass a stub (or none) turn storage off so apps never share a sink.
-    set_event_sink(
-        DatabaseEventSink(database) if isinstance(database, Database) else None
-    )
+    event_store: EventSink | None = None
+    if isinstance(database, Database):
+        event_store = DatabaseEventSink(database)
+        if settings.event_queue_size:
+            event_store = QueuedEventSink(event_store, size=settings.event_queue_size)
+    set_event_sink(event_store)
     app.extensions[BLOB_KEY] = blob_store
     app.extensions[EMBEDDER_KEY] = embedder
     app.extensions[SEARCH_KEY] = search_index
     app.extensions[CHAT_MODEL_KEY] = chat_model or build_chat_model(settings)
+    app.extensions[RERANKER_KEY] = reranker or build_reranker(settings)
     app.extensions[TICKETS_KEY] = (
         PostgresTicketProvider(database) if database is not None else None
     )

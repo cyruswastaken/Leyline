@@ -1,0 +1,16 @@
+{
+  "_comment": "Floors for the answer-quality replay (tests/test_answers_replay.py): gpt-5.4-mini's answers to the 126 golden questions, recorded 2026-11-24 in evals/answers.azure.json, run through today's retrieval, context, prompt, redaction and citation checks with the recorded Azure embeddings and floors. Recorded: answer_rate 0.949, citation_rate 1.000, citation_accuracy 1.000, number_support 1.000, grounded_rate 0.962, refusal_rate 0.917, restricted_pass 1.000, acl_leaks 0. Floors keep 0.03-0.05 of slack. A drop means Leyline's own handling of an answer changed for the worse; it says nothing about a different model (that needs a live run). Never lower a floor to make a change pass.",
+  "min": {
+    "answer_rate": 0.9,
+    "citation_rate": 0.97,
+    "citation_accuracy": 0.97,
+    "number_support": 0.97,
+    "grounded_rate": 0.92,
+    "refusal_rate": 0.88,
+    "restricted_pass": 1.0
+  },
+  "max": {
+    "acl_leaks": 0,
+    "model_errors": 0
+  }
+}

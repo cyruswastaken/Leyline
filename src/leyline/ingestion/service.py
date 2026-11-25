@@ -478,6 +478,7 @@ class IngestionService:
                 version.status = "processing"
             version.error = None
             blob_key, sha256 = version.blob_key, version.sha256
+            title = document.title
             kind = _KIND_BY_CONTENT_TYPE[version.content_type]
 
         data = self._blobs.get(blob_key)
@@ -492,7 +493,7 @@ class IngestionService:
         )
         if not drafts:
             raise InvalidDocumentError("The document contains no extractable text.")
-        vectors = self._embed(drafts)
+        vectors = self._embed(drafts, title)
 
         with self._db.session() as session:
             if not jobs.owns(session, job):
@@ -549,14 +550,27 @@ class IngestionService:
             jobs.succeed(session, job)
             return "indexed"
 
-    def _embed(self, drafts: list[ChunkDraft]) -> list[list[float]] | None:
+    def _embedding_text(self, draft: ChunkDraft, title: str) -> str:
+        """What the model reads to place a chunk in vector space: the chunk, led by
+        its section heading and (``EMBEDDING_INCLUDE_TITLE``) the document's title, so
+        a chunk that never names its subject ("Submit within thirty days") still
+        sits near questions about that subject. The stored text is unchanged."""
+        lines: list[str] = []
+        with_title = self._settings.embedding_include_title and bool(title)
+        if with_title:
+            lines.append(title)
+        # With the title in front, a heading that only repeats it adds nothing.
+        if draft.heading and not (with_title and draft.heading == title):
+            lines.append(draft.heading)
+        lines.append(draft.content)
+        return self._settings.embedding_document_prefix + "\n".join(lines)
+
+    def _embed(
+        self, drafts: list[ChunkDraft], title: str = ""
+    ) -> list[list[float]] | None:
         if self._embedder is None:
             return None
-        prefix = self._settings.embedding_document_prefix
-        texts = [
-            prefix + (f"{d.heading}\n{d.content}" if d.heading else d.content)
-            for d in drafts
-        ]
+        texts = [self._embedding_text(d, title) for d in drafts]
         size = self._settings.embedding_batch_size
         vectors: list[list[float]] = []
         for start in range(0, len(texts), size):

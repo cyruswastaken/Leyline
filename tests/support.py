@@ -219,7 +219,11 @@ class FakeChatModel:
         rewrite: str | None = None,
         fail_stream_after: int | None = None,
         fail_complete: bool = False,
+        reported_usage: tuple[int, int] | None = None,
     ) -> None:
+        # (prompt, completion) tokens to report for each call, like a provider that
+        # counts them; None behaves like a server that reports nothing.
+        self.reported_usage = reported_usage
         self.pieces = list(pieces)
         self.answer = answer
         self.rewrite = rewrite
@@ -229,17 +233,19 @@ class FakeChatModel:
         self.complete_calls: list[tuple[str, str]] = []
         self.stream_closed = False
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, usage: Any = None) -> str:
         from leyline.ports.llm import ModelUnavailableError
 
         self.complete_calls.append((system, user))
         if self.fail_complete:
             raise ModelUnavailableError("http_500")
+        if usage is not None and self.reported_usage is not None:
+            usage.add(*self.reported_usage)
         if self.rewrite is not None and "standalone search query" in system:
             return self.rewrite
         return self.answer
 
-    def stream(self, system: str, user: str) -> Any:
+    def stream(self, system: str, user: str, usage: Any = None) -> Any:
         from leyline.ports.llm import ModelUnavailableError
 
         self.stream_calls.append((system, user))
@@ -251,5 +257,7 @@ class FakeChatModel:
                 ):
                     raise ModelUnavailableError("connection_error")
                 yield piece
+            if usage is not None and self.reported_usage is not None:
+                usage.add(*self.reported_usage)
         finally:
             self.stream_closed = True

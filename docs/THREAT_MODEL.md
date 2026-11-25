@@ -51,7 +51,14 @@ suite is `tests/test_redteam.py` (T-numbers below match its test names).
 | LLM07 System prompt leakage | Mitigated: no secrets in the prompt; verbatim reproduction is blocked (T3). The prompt itself is not secret and is in the repository |
 | LLM08 Vector and embedding weaknesses | ACL enforced in SQL for the vector leg; recorded-embedding eval cache is checked in CI; embedding inversion is out of scope with synthetic data |
 | LLM09 Misinformation | Reduced by grounding, citations and refusal floors; measured by `leyline.evals.answers`; not eliminated, especially with a small model |
-| LLM10 Unbounded consumption | Rate limits, size limits, context budget, timeouts, breaker (T6). Cost metering is estimated tokens only |
+| LLM10 Unbounded consumption | Rate limits, size limits, context budget, timeouts, breaker (T6). Tokens and cost are metered from the provider's own counts per answered turn and summed by day on the auditor page; there is no spend cap or alert yet (Phase 11) |
+
+**Reranker (optional, off by default).** If a reranker service is configured, it receives the question and the
+text of chunks the asker may already read, after the authorization re-check, so it adds no new disclosure path to
+the user; it does hold retrieved text in transit, so it must run inside the trust boundary (loopback or the
+private network, never public) and its replies are never trusted: it can reorder or drop hits but anything it
+returns that the search did not is ignored (`tests/test_reranking.py`). Not adopted for now
+([decision 0011](adr/0011-no-cross-encoder-reranker-for-now.md)).
 
 ## Residual risks and accepted gaps
 
@@ -60,10 +67,10 @@ suite is `tests/test_redteam.py` (T-numbers below match its test names).
 - **Model quality:** a small local model omits citations about one time in six and sometimes refuses wrongly. The security properties do not depend on it; answer quality does.
 - **Injection scoring is evadable.** It is a tripwire and a log signal, not a boundary.
 - **Parsers run unsandboxed** in the worker (bounded inputs, lease-limited).
-- **Event storage is synchronous** and fails open: if the database rejects an event the request continues, an `EVENT_STORE_FAILED` line goes to stdout, and the event is lost from the table. A queue-backed sink is future work.
-- **`security_events` is append-only by trigger.** `TRUNCATE`, a superuser, or table drops bypass it; production must give the application role INSERT and SELECT only.
+- **Event storage fails open:** if the database rejects an event (or, with the background queue, the queue is full) the request continues, an `EVENT_STORE_FAILED` line goes to stdout, and the event is lost from the table. With `EVENT_QUEUE_SIZE` the write is off the request path; events still queued when the process is killed (not stopped normally) are lost from the table, which is why stdout is the first copy.
+- **`security_events` is append-only by trigger.** `TRUNCATE`, a superuser, or table drops bypass it; production must give the application role INSERT and SELECT only (`deploy/sql/app_role.sql`, tested; applying it needs a migration identity separate from the runtime one, which is not built yet, so today it is a tested script rather than a live control).
 - **Support agents see ticket text** in full, including anything a user chose to paste. The draft excludes assistant and document text; it cannot stop a user pasting it.
-- **Azure-specific controls** (managed identity, Key Vault, network rules, Entra group overage) are Phase 8.
+- **Azure-specific controls:** Key Vault and managed identity are built ([0004](adr/0004-secrets-in-key-vault-read-by-managed-identity.md), [0014](adr/0014-the-container-identity-signs-in-to-the-data-services.md): one identity is the database administrator, a known trade-off). Private networking is not built: Postgres and Redis have public endpoints (TLS plus identity or key; Postgres allows only Azure services). Entra group overage resolution is built and off until consented ([0016](adr/0016-resolve-entra-group-overage-through-graph-and-fail-closed.md)); when on, the app holds the user's Graph access token for one call and never stores it.
 - Third-party services (Keycloak, Ollama, Azurite) are development stand-ins and were not security tested.
 
 ## How to extend

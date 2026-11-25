@@ -29,6 +29,9 @@ from leyline.wiring import (
 
 log = logging.getLogger("leyline.worker")
 
+# How often the loop logs "worker heartbeat" (the silence alert waits 10 minutes).
+ALIVE_LOG_SECONDS = 60.0
+
 
 def run_worker(
     service: IngestionService,
@@ -49,8 +52,15 @@ def run_worker(
     """
     processed = 0
     next_maintenance = time.monotonic()
+    next_alive_log = 0.0
     while not stop.is_set():
         _beat(heartbeat)
+        if time.monotonic() >= next_alive_log:
+            # The heartbeat file cannot be checked from outside a Container App, so
+            # the loop also says it is alive in the logs, where an alert can watch
+            # for silence.
+            next_alive_log = time.monotonic() + ALIVE_LOG_SECONDS
+            log.info("worker heartbeat")
         if maintenance is not None and time.monotonic() >= next_maintenance:
             next_maintenance = time.monotonic() + maintenance_interval
             try:

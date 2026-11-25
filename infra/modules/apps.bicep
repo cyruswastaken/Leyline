@@ -23,6 +23,15 @@ param oidcGroupNames string
 param oidcMetadataUrl string
 param webAlwaysOn bool
 
+@description('Sign in to Postgres, Redis, Blob storage and the models with the container identity (no keys). The values below are then addresses and names, not secrets.')
+param useManagedIdentity bool = false
+param identityName string = ''
+param identityClientId string = ''
+param identityPrincipalId string = ''
+param postgresHost string = ''
+param redisHost string = ''
+param blobEndpoint string = ''
+
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: logAnalyticsName
 }
@@ -62,13 +71,16 @@ var registries = [
 ]
 
 // Key Vault references: the platform pulls each value with the managed identity.
-var secretNames = [
+var keySecretNames = [
   { name: 'database-url', vault: 'database-url' }
   { name: 'redis-url', vault: 'redis-url' }
   { name: 'blob-connection-string', vault: 'blob-connection-string' }
   { name: 'openai-api-key', vault: 'openai-api-key' }
-  { name: 'oidc-client-secret', vault: 'oidc-client-secret' }
 ]
+var secretNames = concat(
+  useManagedIdentity ? [] : keySecretNames,
+  [{ name: 'oidc-client-secret', vault: 'oidc-client-secret' }]
+)
 var secrets = [
   for s in secretNames: {
     name: s.name
@@ -82,23 +94,43 @@ var llmBaseUrl = '${openAiEndpoint}openai/v1/'
 // Shared by the web app, the worker and the task job: production mode validates the
 // whole configuration in every process that loads settings (a worker without
 // SESSION_COOKIE_SECURE refuses to start), so nothing required may be web-only.
-var commonEnv = [
+// Where each data service is reached, and how the app signs in: a Key Vault reference to a
+// key, or (useManagedIdentity) the container identity, so the address is all there is.
+var keyEnv = [
+  { name: 'DATABASE_URL', secretRef: 'database-url' }
+  { name: 'BLOB_CONNECTION_STRING', secretRef: 'blob-connection-string' }
+  { name: 'REDIS_URL', secretRef: 'redis-url' }
+  { name: 'LLM_API_KEY', secretRef: 'openai-api-key' }
+  { name: 'EMBEDDING_API_KEY', secretRef: 'openai-api-key' }
+]
+var identityEnv = [
+  { name: 'AZURE_CLIENT_ID', value: identityClientId }
+  // ssl_context=true makes the pg8000 driver use TLS, which Azure requires; the user
+  // is the identity's name and a token is the password.
+  { name: 'DATABASE_URL', value: 'postgresql+pg8000://${identityName}@${postgresHost}:5432/leyline?ssl_context=true' }
+  { name: 'DATABASE_ENTRA_AUTH', value: 'true' }
+  { name: 'BLOB_ACCOUNT_URL', value: blobEndpoint }
+  { name: 'REDIS_URL', value: 'rediss://${redisHost}:10000/0' }
+  { name: 'REDIS_ENTRA_USERNAME', value: identityPrincipalId }
+  { name: 'LLM_ENTRA_AUTH', value: 'true' }
+  { name: 'EMBEDDING_ENTRA_AUTH', value: 'true' }
+]
+
+var commonEnv = concat(useManagedIdentity ? identityEnv : keyEnv, [
   { name: 'LEYLINE_ENV', value: 'production' }
   { name: 'SESSION_COOKIE_SECURE', value: 'true' }
   // Container Apps ingress is the one proxy in front of the app.
   { name: 'TRUSTED_PROXY_COUNT', value: '1' }
-  { name: 'DATABASE_URL', secretRef: 'database-url' }
-  { name: 'BLOB_CONNECTION_STRING', secretRef: 'blob-connection-string' }
-  { name: 'REDIS_URL', secretRef: 'redis-url' }
+  // Store security events on a background thread (docs/ARCHITECTURE.md): requests no
+  // longer wait for the event store, and a backed-up queue drops events (counted) instead.
+  { name: 'EVENT_QUEUE_SIZE', value: '1000' }
   { name: 'LLM_BASE_URL', value: llmBaseUrl }
   { name: 'LLM_MODEL', value: chatDeployment }
-  { name: 'LLM_API_KEY', secretRef: 'openai-api-key' }
   // The GPT-5 family only accepts its default temperature, and reasoning takes longer.
   { name: 'LLM_SEND_TEMPERATURE', value: 'false' }
   { name: 'LLM_TIMEOUT_SECONDS', value: '55' }
   { name: 'EMBEDDING_BASE_URL', value: llmBaseUrl }
   { name: 'EMBEDDING_MODEL', value: embeddingDeployment }
-  { name: 'EMBEDDING_API_KEY', secretRef: 'openai-api-key' }
   // text-embedding-3 can return the schema's fixed 768 dimensions directly.
   { name: 'EMBEDDING_SEND_DIMENSIONS', value: 'true' }
   // Relevance floors calibrated for text-embedding-3-small (the defaults are for
@@ -110,7 +142,7 @@ var commonEnv = [
   { name: 'OIDC_CLIENT_ID', value: oidcClientId }
   { name: 'OIDC_GROUP_NAMES', value: oidcGroupNames }
   { name: 'OIDC_CLIENT_SECRET', secretRef: 'oidc-client-secret' }
-]
+])
 
 resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
   name: 'leyline-web'

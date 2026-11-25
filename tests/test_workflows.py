@@ -141,6 +141,67 @@ def test_the_deploy_updates_a_running_environment_and_never_deletes_or_touches_e
     assert "::add-mask::" in text  # the generated database password is masked
 
 
+def azure_steps() -> dict[str, dict]:
+    return {s.get("name", ""): s for s in deploy_workflow()["jobs"]["azure"]["steps"]}
+
+
+def test_a_destructive_migration_is_refused_unless_it_was_ticked():
+    inputs = triggers(deploy_workflow())["workflow_dispatch"]["inputs"]
+    assert inputs["allow_destructive_migration"]["default"] is False
+    step = azure_steps()["Check the migrations can be rolled back over"]
+    script = step["run"]
+    assert "scripts/check_migrations.py" in script and "--since" in script
+    assert "--allow" in script  # only added when the box was ticked
+    assert 'INPUT_ALLOW_DESTRUCTIVE_MIGRATION" = "true"' in script
+    # the check runs before anything is built or changed in Azure
+    names = list(azure_steps())
+    assert names.index("Check the migrations can be rolled back over") < names.index(
+        "Deploy the apps"
+    )
+    checkout = deploy_workflow()["jobs"]["azure"]["steps"][0]
+    assert checkout["with"]["fetch-depth"] == 0  # it compares with the live commit
+
+
+def test_the_deploy_smoke_tests_the_site_and_rolls_back_a_failed_release():
+    steps = azure_steps()
+    smoke = steps["Smoke test the deployed site (signed out)"]
+    assert "scripts/smoke_test.py" in smoke["run"] and smoke["id"] == "smoke"
+    rollback = steps["Roll back to the previous image (the release failed its checks)"]
+    condition = rollback["if"]
+    assert "failure()" in condition and "steps.deploy.outcome == 'success'" in condition
+    script = rollback["run"]
+    assert '--image "$PREVIOUS_WEB_IMAGE"' in script
+    assert '--image "$PREVIOUS_WORKER_IMAGE"' in script
+    # it keeps the job red so a rolled-back release is never mistaken for a deploy
+    assert script.rstrip().endswith("exit 1")
+    # the order: ready, then smoke, then rollback
+    names = list(steps)
+    assert names.index("Smoke test the deployed site (signed out)") < names.index(
+        "Roll back to the previous image (the release failed its checks)"
+    )
+
+
+def test_the_previous_images_are_remembered_before_anything_changes():
+    steps = azure_steps()
+    read = steps["Read the running environment (this workflow only updates it)"]["run"]
+    assert "PREVIOUS_WEB_IMAGE" in read and "PREVIOUS_WORKER_IMAGE" in read
+    names = list(steps)
+    assert names.index(
+        "Read the running environment (this workflow only updates it)"
+    ) < names.index("Deploy the apps")
+
+
+def test_an_update_never_switches_how_the_environment_signs_in_to_its_data_services():
+    text = DEPLOY.read_text(encoding="utf-8")
+    # read from the running app, passed back to the template, never stored in GitHub
+    assert (
+        "DATABASE_ENTRA_AUTH" in text
+        and 'useManagedIdentity:{value:($mi == "true")}' in text
+    )
+    assert "alertActionGroupId:{value:$ag}" in text
+    assert "vars.USE_MANAGED_IDENTITY" not in text and "vars.ALERT" not in text
+
+
 def test_the_template_has_the_switch_the_pipeline_relies_on():
     main = (ROOT / "infra" / "main.bicep").read_text(encoding="utf-8")
     assert "param writeOidcSecret bool = true" in main
@@ -202,11 +263,35 @@ def test_the_role_assignment_condition_allows_only_the_roles_the_template_assign
         )
     )
     bicep = (ROOT / "infra" / "modules" / "platform.bicep").read_text(encoding="utf-8")
-    used = set(re.findall(r"Role = '([0-9a-f-]{36})'", bicep))
-    assert listed == used and len(listed) == 2
+    used = set(re.findall(r"(?:Role|Id) = '([0-9a-f-]{36})'", bicep))
+    assert (
+        listed == used and len(listed) == 3
+    )  # AcrPull, Key Vault Secrets User, Blob Data Contributor
     assert (
         "GuidEquals {$ids}" in script and script.count("GuidEquals {$ids}") == 2
     )  # write and delete
+
+
+def test_on_the_openai_account_only_the_openai_user_role_may_be_assigned():
+    script = IDENTITY.read_text(encoding="utf-8")
+    listed = set(
+        re.findall(
+            r"'([0-9a-f-]{36})'",
+            script.split("$AssignableOnOpenAi = @(", 1)[1].split(")", 1)[0],
+        )
+    )
+    access = (ROOT / "infra" / "modules" / "openai-access.bicep").read_text(
+        encoding="utf-8"
+    )
+    used = set(re.findall(r"Id = '([0-9a-f-]{36})'", access))
+    assert listed == used and len(listed) == 1
+    assert script.count("GuidEquals {$openAiIds}") == 2  # write and delete
+    # the conditioned right is the only role-assignment right on that account
+    assert script.count("$openAiScope $RoleRbacAdministrator") == 1
+    assert (
+        "$openAiCondition"
+        in script.split("$openAiScope $RoleRbacAdministrator", 1)[1][:200]
+    )
 
 
 def test_the_identity_script_previews_and_is_scoped_to_what_it_owns():

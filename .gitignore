@@ -39,3 +39,7 @@ src/leyline/static/dist/
 # Entra registration output (client secret is DPAPI-encrypted; demo passwords in plain text)
 infra/.entra.local.json
 infra/.entra-demo-users.local.txt
+
+# Browser test output (traces hold demo-session cookies)
+frontend/test-results/
+frontend/playwright-report/

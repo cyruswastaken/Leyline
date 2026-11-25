@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 
+from azure.core.credentials import TokenCredential
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContentSettings, ExponentialRetry
 
@@ -17,19 +18,47 @@ _PROBE_TIMEOUT_SECONDS = 3
 
 
 class AzureBlobStore:
-    def __init__(self, connection_string: str, container: str) -> None:
-        self._service = BlobServiceClient.from_connection_string(
-            connection_string,
-            connection_timeout=_TIMEOUT_SECONDS,
-            retry_policy=ExponentialRetry(
-                initial_backoff=1, increment_base=2, retry_total=2
-            ),
+    """Signs in with a connection string (Azurite, local use) or, given an account
+    address and a credential, with a token credential such as the managed identity."""
+
+    def __init__(
+        self,
+        connection_string: str | None,
+        container: str,
+        *,
+        account_url: str | None = None,
+        credential: TokenCredential | None = None,
+    ) -> None:
+        data_policy = ExponentialRetry(
+            initial_backoff=1, increment_base=2, retry_total=2
         )
-        self._probe = BlobServiceClient.from_connection_string(
-            connection_string,
-            connection_timeout=_PROBE_TIMEOUT_SECONDS,
-            retry_policy=ExponentialRetry(retry_total=0),
-        )
+        probe_policy = ExponentialRetry(retry_total=0)
+        if connection_string:
+            self._service = BlobServiceClient.from_connection_string(
+                connection_string,
+                connection_timeout=_TIMEOUT_SECONDS,
+                retry_policy=data_policy,
+            )
+            self._probe = BlobServiceClient.from_connection_string(
+                connection_string,
+                connection_timeout=_PROBE_TIMEOUT_SECONDS,
+                retry_policy=probe_policy,
+            )
+        elif account_url and credential is not None:
+            self._service = BlobServiceClient(
+                account_url,
+                credential=credential,
+                connection_timeout=_TIMEOUT_SECONDS,
+                retry_policy=data_policy,
+            )
+            self._probe = BlobServiceClient(
+                account_url,
+                credential=credential,
+                connection_timeout=_PROBE_TIMEOUT_SECONDS,
+                retry_policy=probe_policy,
+            )
+        else:
+            raise ValueError("a connection string, or an account URL and a credential")
         self._container = self._service.get_container_client(container)
         self._container_ready = False
 

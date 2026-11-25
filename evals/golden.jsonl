@@ -3,6 +3,8 @@
 #       | unanswerable (nothing in the knowledge base answers it; the right result is no hits).
 # Personas mirror the Keycloak demo users: employee (staff), security (+security), hr (+hr), finance (+finance).
 # Questions are natural paraphrases on purpose; do not "tune" them to the document wording.
+# tier "near" (unanswerable only): close to a covered topic; scored separately as near_refusal_rate.
+# Batch 2 (a101+, r101+, u101+, 2026-11-24) was written from the corpus before any measurement; keep the failures.
 {"id":"a001","persona":"employee","kind":"answerable","question":"I forgot my login password, how do I get back in?","expect":["IT-PWD-002"]}
 {"id":"a002","persona":"employee","kind":"answerable","question":"How do I set up the second verification step on my phone?","expect":["IT-MFA-001"]}
 {"id":"a003","persona":"employee","kind":"answerable","question":"My old phone is gone and I need to register the new one for logging in securely","expect":["IT-MFA-001"]}
@@ -81,3 +83,51 @@
 {"id":"u010","persona":"security","kind":"unanswerable","question":"Translate good morning into Japanese"}
 {"id":"u011","persona":"hr","kind":"unanswerable","question":"Write me a poem about the sea"}
 {"id":"u012","persona":"finance","kind":"unanswerable","question":"What is the current price of Bitcoin?"}
+{"id":"a101","persona":"employee","kind":"answerable","question":"What are the different levels I can label a document with?","expect":["SEC-DATA-001"]}
+{"id":"a102","persona":"employee","kind":"answerable","question":"How should restricted data be handled?","expect":["SEC-DATA-001"]}
+{"id":"a103","persona":"employee","kind":"answerable","question":"I clicked a link in a suspicious email, what now?","expect":["SEC-PHISH-001"]}
+{"id":"a104","persona":"employee","kind":"answerable","question":"How do I report an email that looks like phishing?","expect":["SEC-PHISH-001","IT-MAIL-001"]}
+{"id":"a105","persona":"employee","kind":"answerable","question":"How big is my mailbox?","expect":["IT-MAIL-001"]}
+{"id":"a106","persona":"employee","kind":"answerable","question":"How do I get access to a team calendar?","expect":["IT-MAIL-001"]}
+{"id":"a107","persona":"employee","kind":"answerable","question":"Where can I raise a concern without giving my name?","expect":["HR-CONDUCT-001"]}
+{"id":"a108","persona":"employee","kind":"answerable","question":"Do I have to tell anyone about my side job?","expect":["HR-CONDUCT-001"]}
+{"id":"a109","persona":"employee","kind":"answerable","question":"When are the company all-hands meetings?","expect":["HR-CAL-001"]}
+{"id":"a110","persona":"employee","kind":"answerable","question":"When does the office close at the end of the year?","expect":["HR-CAL-001"]}
+{"id":"a111","persona":"employee","kind":"answerable","question":"How long do I have to submit my receipts?","expect":["FIN-EXP-001"]}
+{"id":"a112","persona":"employee","kind":"answerable","question":"Will the company pay for alcohol at a client dinner?","expect":["FIN-EXP-001"]}
+{"id":"a113","persona":"employee","kind":"answerable","question":"What happens if I use the company card for something personal?","expect":["FIN-CARD-001"]}
+{"id":"a114","persona":"employee","kind":"answerable","question":"Is anyone available at night for a security emergency?","expect":["IT-HELP-002"]}
+{"id":"a115","persona":"employee","kind":"answerable","question":"What do I need to do before working from home?","expect":["IT-REM-001"]}
+{"id":"a116","persona":"employee","kind":"answerable","question":"What does my phone need for work email?","expect":["IT-MDM-001"]}
+{"id":"a117","persona":"employee","kind":"answerable","question":"How should I set up my router at home for work?","expect":["IT-REM-001"]}
+{"id":"a118","persona":"employee","kind":"answerable","question":"Who do I tell when I lose my office badge?","expect":["FAC-ACC-001"]}
+{"id":"a119","persona":"security","kind":"answerable","question":"How often do system owners review who has access to their systems?","expect":["SEC-AR-001"]}
+{"id":"a120","persona":"security","kind":"answerable","question":"Who has to approve elevated administrator access?","expect":["SEC-PAM-001"]}
+{"id":"a121","persona":"hr","kind":"answerable","question":"Can I ask a candidate about their family plans?","expect":["HR-INT-001"]}
+{"id":"a122","persona":"finance","kind":"answerable","question":"On which day of the week do supplier payments run?","expect":["FIN-INV-001"]}
+{"id":"a123","persona":"finance","kind":"answerable","question":"When do departments submit their draft budgets?","expect":["FIN-BUD-001"]}
+{"id":"a124","persona":"hr","kind":"answerable","question":"How soon must interviewers send their scores to HR?","expect":["HR-INT-001"]}
+{"id":"r101","persona":"employee","kind":"restricted","question":"How often do system owners review who has access to their systems?","forbid":["SEC-AR-001"]}
+{"id":"r102","persona":"employee","kind":"restricted","question":"Who has to approve elevated administrator access?","forbid":["SEC-PAM-001"]}
+{"id":"r103","persona":"employee","kind":"restricted","question":"What are break-glass accounts and who may use them?","forbid":["SEC-PAM-001"]}
+{"id":"r104","persona":"employee","kind":"restricted","question":"What is the process for requesting a firewall change?","forbid":["SEC-FW-001"]}
+{"id":"r105","persona":"employee","kind":"restricted","question":"Can I ask a job candidate about their family plans?","forbid":["HR-INT-001"]}
+{"id":"r106","persona":"employee","kind":"restricted","question":"On which day of the week do supplier payments run?","forbid":["FIN-INV-001"]}
+{"id":"r107","persona":"hr","kind":"restricted","question":"When do departments submit their draft budgets?","forbid":["FIN-BUD-001"]}
+{"id":"r108","persona":"finance","kind":"restricted","question":"How soon must interviewers send their scores to HR?","forbid":["HR-INT-001"]}
+{"id":"r109","persona":"security","kind":"restricted","question":"What are the stages of the disciplinary procedure for misconduct?","forbid":["HR-DISC-001"]}
+{"id":"r110","persona":"hr","kind":"restricted","question":"What enrichment steps does an analyst take on a security alert?","forbid":["SEC-SOC-001"]}
+{"id":"r111","persona":"finance","kind":"restricted","question":"How is a security incident contained?","forbid":["SEC-IR-001"]}
+{"id":"r112","persona":"employee","kind":"restricted","question":"What is a three-way match for invoices?","forbid":["FIN-INV-001"]}
+{"id":"u101","persona":"employee","kind":"unanswerable","tier":"near","question":"Can I work from another country for a month?"}
+{"id":"u102","persona":"employee","kind":"unanswerable","tier":"near","question":"How much does lunch cost in the cafeteria?"}
+{"id":"u103","persona":"employee","kind":"unanswerable","tier":"near","question":"Can I bring my own monitor from home?"}
+{"id":"u104","persona":"employee","kind":"unanswerable","tier":"near","question":"How do I set up a smart speaker in my home office?"}
+{"id":"u105","persona":"employee","kind":"unanswerable","tier":"near","question":"What is the dress code for client meetings?"}
+{"id":"u106","persona":"employee","kind":"unanswerable","tier":"near","question":"How do I book a hotel for a personal holiday?"}
+{"id":"u107","persona":"employee","kind":"unanswerable","tier":"near","question":"How much does the company contribute to my pension?"}
+{"id":"u108","persona":"employee","kind":"unanswerable","tier":"near","question":"How many sick days do I get?"}
+{"id":"u109","persona":"employee","kind":"unanswerable","tier":"near","question":"How do I reset the password on my personal email account?"}
+{"id":"u110","persona":"employee","kind":"unanswerable","tier":"near","question":"Which phone model should I buy for myself?"}
+{"id":"u111","persona":"employee","kind":"unanswerable","tier":"near","question":"How do I install a printer driver on my home computer?"}
+{"id":"u112","persona":"employee","kind":"unanswerable","tier":"near","question":"What is the Wi-Fi password for the building?"}

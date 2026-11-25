@@ -36,12 +36,17 @@ from leyline.adapters.search_postgres import PostgresSearchIndex, SearchOptions
 from leyline.config import Settings, get_settings
 from leyline.db.database import Database
 from leyline.evals.__main__ import DEFAULT_GOLDEN, document_refs
+from leyline.evals.answer_cache import (
+    AnswerCache,
+    RecordingChatModel,
+    ReplayChatModel,
+)
 from leyline.evals.golden import GoldenCase, GoldenError, load_acl_oracle, load_golden
 from leyline.ports.llm import ChatModel, ModelUnavailableError
 from leyline.ports.search import SearchIndex
 from leyline.services.authorization import can_read
 from leyline.services.chat_service import NO_ANSWER, finalize_answer, retrieve
-from leyline.services.llm import generate_answer
+from leyline.services.llm import PROMPT_VERSION, generate_answer
 from leyline.wiring import build_chat_model, build_database, build_embedder
 
 _REFUSAL = re.compile(
@@ -135,10 +140,101 @@ def unsupported_numbers(answer: str, context: str, question: str = "") -> list[s
     return sorted(n for n in stated if n not in known)
 
 
+_STOPWORDS = frozenset(
+    [
+        "that",
+        "this",
+        "with",
+        "from",
+        "have",
+        "your",
+        "will",
+        "would",
+        "should",
+        "could",
+        "about",
+        "which",
+        "their",
+        "there",
+        "these",
+        "those",
+        "them",
+        "they",
+        "then",
+        "than",
+        "what",
+        "when",
+        "where",
+        "into",
+        "only",
+        "also",
+        "each",
+        "must",
+        "need",
+        "needs",
+        "used",
+        "using",
+        "make",
+        "made",
+        "does",
+        "done",
+        "been",
+        "being",
+        "were",
+        "more",
+        "most",
+        "other",
+        "such",
+        "very",
+        "just",
+        "like",
+        "over",
+        "under",
+        "after",
+        "before",
+    ]
+)
+_SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
+_CITATION = re.compile(r"\[(\d{1,2})\]")
+# A sentence that cites a source should share at least this much of its content
+# words with it. Calibrated on recorded answers (docs/EVALUATION.md): correct
+# citations sit well above it; a citation pasted onto an unrelated sentence does not.
+GROUNDING_MINIMUM = 0.25
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]{4,}", text.lower()) if w not in _STOPWORDS}
+
+
+def grounding(answer: str, sources: Sequence[str]) -> list[tuple[int, float]]:
+    """For every citation in the answer: its number and the share of the citing
+    sentence's content words that also appear in the cited source (deterministic,
+    no model). ``sources`` are the texts shown to the model, numbered from 1."""
+    scores: list[tuple[int, float]] = []
+    for sentence in _SENTENCES.split(answer):
+        numbers = {int(n) for n in _CITATION.findall(sentence)}
+        words = _content_words(_CITATION.sub("", sentence))
+        if not numbers or not words:
+            continue
+        for number in sorted(numbers):
+            if 1 <= number <= len(sources):
+                shared = words & _content_words(sources[number - 1])
+                scores.append((number, len(shared) / len(words)))
+    return scores
+
+
+def ungrounded_citations(
+    answer: str, sources: Sequence[str], minimum: float = GROUNDING_MINIMUM
+) -> list[int]:
+    """Citation numbers whose sentence shares too little with the cited source."""
+    return [n for n, share in grounding(answer, sources) if share < minimum]
+
+
 @dataclass
 class CaseResult:
     case: GoldenCase
     answer: str = ""
+    ungrounded: list[int] = field(default_factory=list)  # weakly supported citations
     sources: list[str] = field(default_factory=list)  # corpus ids shown to the model
     cited: list[str] = field(default_factory=list)  # corpus ids the answer cites
     refused: bool = False
@@ -188,6 +284,9 @@ class AnswerReport:
                 scored, lambda r: bool(set(r.cited) & set(r.case.expect))
             ),
             "number_support": rate(scored, lambda r: not r.unsupported),
+            "grounded_rate": rate(
+                [r for r in scored if r.cited], lambda r: not r.ungrounded
+            ),
             "refusal_rate": rate(by["unanswerable"], lambda r: r.refused),
             "restricted_pass": rate(by["restricted"], lambda r: r.passed),
             "acl_leaks": float(sum(len(r.leaked) for r in self.results)),
@@ -245,6 +344,13 @@ def run_answer_eval(
         ]
         result.refused = is_refusal(text)
         result.unsupported = unsupported_numbers(text, prepared.context, case.question)
+        result.ungrounded = ungrounded_citations(
+            text,
+            [
+                f"{hit.title}\n{hit.heading or ''}\n{hit.content}"
+                for hit in prepared.hits
+            ],
+        )
         if case.kind == "restricted":
             named = [
                 ref
@@ -281,6 +387,7 @@ def format_report(report: AnswerReport, *, verbose: bool = False) -> str:
         f"  cites a source               {s['citation_rate']:.3f}",
         f"  cites an expected document   {s['citation_accuracy']:.3f}",
         f"  figures supported by sources {s['number_support']:.3f}",
+        f"  citations grounded in source {s['grounded_rate']:.3f}",
         f"  refused (unanswerable)       {s['refusal_rate']:.3f}",
         f"  restricted pass              {s['restricted_pass']:.3f}",
         f"  ACL leaks                    {int(s['acl_leaks'])}",
@@ -305,11 +412,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-cases", type=int, default=0, help="0 = all")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--json", type=Path, default=None)
+    parser.add_argument(
+        "--record-answers",
+        type=Path,
+        default=None,
+        help="also save the live model's answers here, for offline replay in CI",
+    )
+    parser.add_argument(
+        "--replay-answers",
+        type=Path,
+        default=None,
+        help="use these recorded answers instead of a live model",
+    )
     args = parser.parse_args(argv)
+    if args.record_answers and args.replay_answers:
+        parser.error("--record-answers and --replay-answers are exclusive")
 
     settings = get_settings()
     database = build_database(settings)
-    model = build_chat_model(settings)
+    model: ChatModel | None
+    recorder: RecordingChatModel | None = None
+    if args.replay_answers:
+        model = ReplayChatModel(AnswerCache.load(args.replay_answers))
+    else:
+        model = build_chat_model(settings)
+        if args.record_answers and model is not None:
+            recorder = RecordingChatModel(
+                model, AnswerCache(model.model, prompt_version=PROMPT_VERSION)
+            )
+            model = recorder
     if database is None or model is None:
         print(
             "needs DATABASE_URL and a chat model (LLM_BASE_URL, LLM_MODEL)",
@@ -346,6 +477,9 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         database.dispose()
 
+    if recorder is not None and args.record_answers:
+        recorder.cache.save(args.record_answers)
+        print(f"recorded {len(recorder.cache)} answers -> {args.record_answers}")
     print(f"model: {model.model}")
     print(format_report(report, verbose=args.verbose))
     if args.json:

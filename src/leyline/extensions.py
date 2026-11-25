@@ -13,6 +13,7 @@ from leyline.ingestion.service import IngestionService
 from leyline.ports.blob import BlobStore
 from leyline.ports.embeddings import Embedder
 from leyline.ports.llm import ChatModel
+from leyline.ports.rerank import Reranker
 from leyline.ports.search import SearchIndex
 from leyline.ports.tickets import TicketProvider
 from leyline.ratelimit import RedisRateLimiter
@@ -27,6 +28,7 @@ EMBEDDER_KEY = "leyline.embedder"
 SEARCH_KEY = "leyline.search_index"
 INGESTION_KEY = "leyline.ingestion"
 CHAT_MODEL_KEY = "leyline.chat_model"
+RERANKER_KEY = "leyline.reranker"
 CONVERSATIONS_KEY = "leyline.conversations"
 TICKETS_KEY = "leyline.tickets"
 
@@ -85,3 +87,8 @@ def chat_model() -> ChatModel | None:
 
 def embedder() -> Embedder | None:
     return cast("Embedder | None", current_app.extensions.get(EMBEDDER_KEY))
+
+
+def reranker() -> Reranker | None:
+    """None when no reranker is configured (search order is used as it is)."""
+    return cast("Reranker | None", current_app.extensions.get(RERANKER_KEY))

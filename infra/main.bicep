@@ -51,6 +51,12 @@ param oidcGroupNames string = '{}'
 @description('Keep one web replica running (true) or let it scale to zero when idle (false, cheaper but the first request is slow).')
 param webAlwaysOn bool = true
 
+@description('Resource id of the action group that alerts notify (created by infra/alerts.ps1, which holds the email address). Empty: alerts still exist and show in the portal, but notify nobody.')
+param alertActionGroupId string = ''
+
+@description('Sign in to Postgres, Redis, Blob storage and the models with the container identity, so no database password, Redis key, storage key or model key is created or stored (decision 0004, 0014). Needs a rebuild: the data services change how they accept sign-ins. Off keeps the keys-in-Key-Vault setup.')
+param useManagedIdentity bool = false
+
 param tags object = {
   project: 'leyline'
   'delete-with': appResourceGroupName
@@ -71,6 +77,7 @@ module platform 'modules/platform.bicep' = {
     location: location
     suffix: suffix
     tags: tags
+    useManagedIdentity: useManagedIdentity
   }
 }
 
@@ -82,6 +89,9 @@ module data 'modules/data.bicep' = {
     suffix: suffix
     tags: tags
     postgresAdminPassword: postgresAdminPassword
+    useManagedIdentity: useManagedIdentity
+    identityName: platform.outputs.identityName
+    identityPrincipalId: platform.outputs.identityPrincipalId
   }
 }
 
@@ -99,11 +109,26 @@ module openai 'modules/openai.bicep' = {
   }
 }
 
-// A separate step that waits for both deployments, then reads the key.
+// A separate step that waits for both deployments, then reads the key. When the identity
+// signs in the key is not read and the output is empty.
 module openaiKey 'modules/openai-key.bicep' = {
   scope: resourceGroup(openAiResourceGroupName)
   name: 'openai-key'
-  params: { accountName: openAiAccountName }
+  params: {
+    accountName: openAiAccountName
+    skip: useManagedIdentity
+  }
+  dependsOn: [openai]
+}
+
+// The identity may call the models (one role assignment on the existing account).
+module openaiAccess 'modules/openai-access.bicep' = if (useManagedIdentity) {
+  scope: resourceGroup(openAiResourceGroupName)
+  name: 'openai-access'
+  params: {
+    accountName: openAiAccountName
+    identityPrincipalId: platform.outputs.identityPrincipalId
+  }
   dependsOn: [openai]
 }
 
@@ -119,6 +144,21 @@ module secrets 'modules/secrets.bicep' = {
     openAiKey: openaiKey.outputs.apiKey
     oidcClientSecret: oidcClientSecret
     includeOidcSecret: deployApps && writeOidcSecret
+    useManagedIdentity: useManagedIdentity
+  }
+}
+
+// Alerts on the logs and the database (docs/SLO.md). They exist from the first pass, so
+// a broken first deploy is also noticed; they notify the action group when one is given.
+module monitoring 'modules/monitoring.bicep' = {
+  scope: appRg
+  name: 'monitoring'
+  params: {
+    location: location
+    tags: tags
+    logAnalyticsName: platform.outputs.logAnalyticsName
+    postgresName: data.outputs.postgresName
+    actionGroupId: alertActionGroupId
   }
 }
 
@@ -141,6 +181,13 @@ module apps 'modules/apps.bicep' = {
     oidcGroupNames: oidcGroupNames
     oidcMetadataUrl: '${environment().authentication.loginEndpoint}${oidcTenantId}/v2.0/.well-known/openid-configuration'
     webAlwaysOn: webAlwaysOn
+    useManagedIdentity: useManagedIdentity
+    identityName: platform.outputs.identityName
+    identityClientId: platform.outputs.identityClientId
+    identityPrincipalId: platform.outputs.identityPrincipalId
+    postgresHost: data.outputs.postgresHost
+    redisHost: data.outputs.redisHost
+    blobEndpoint: platform.outputs.blobEndpoint
   }
   dependsOn: [secrets]
 }

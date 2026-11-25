@@ -140,7 +140,29 @@ streaming and status, `aria-pressed` on feedback buttons, a native `<dialog>` fo
 focus-visible outlines in lime, and `prefers-reduced-motion` support. The chat page keeps a (visually
 hidden) `h1` while its large pixel title is only decoration.
 
-Audits use axe-core in a real browser (so colour contrast is measured on the real render):
+CI audits every page with axe-core in a real browser (so colour contrast is measured on the real
+render): welcome, the sign-in page, both error pages, chat (empty, answered, support dialog), tickets
+(requester and agent), knowledge admin and monitoring. Any serious or critical violation fails the build.
+
+## Browser tests
+
+`frontend/e2e` (Playwright) drives the whole stack with real Keycloak sign-ins: every persona and its
+navigation, a Security-only document cited for Security and not for staff, upload to citation to access
+revoked to deletion, streaming, Stop, feedback, escalation and resolution by an agent. A
+Content-Security-Policy violation on any app page fails the test. `compose.e2e.yaml` swaps in the fake
+chat model from `loadtest/` and keyword search, so results do not depend on a model or on `.env`; its
+own project name keeps development data apart. With the development stack stopped (same ports):
+
+```bash
+docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml up -d --build --wait
+docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml run --rm app python -m leyline.seed
+cd frontend && npm run e2e        # E2E_BROWSER_CHANNEL=msedge uses an installed Edge
+cd .. && docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml down -v
+```
+
+Without a local channel, install the test browser first with `npx playwright install chromium`.
+
+For a quick look at one page by hand:
 
 ```bash
 cd frontend && npm run axe:copy      # copies axe into the git-ignored build output
@@ -149,10 +171,8 @@ cd frontend && npm run axe:copy      # copies axe into the git-ignored build out
 #   await new Promise((r) => (s.onload = r)); (await axe.run()).violations
 ```
 
-Result on 2026-11-10: zero violations on the landing, chat (empty and with an answer), tickets,
-knowledge admin and monitoring pages, with 27-42 rules passing per page. The error page and the agent view of the tickets page were not audited. The audit found
-one real bug, fixed in this phase (the chat page lost its `h1` once a conversation started). It is a
-manual check, not part of CI.
+History: the first manual audit (2026-11-10) found one real bug (the chat page lost its `h1` once a
+conversation started); the automated audit (2026-11-25) found no serious or critical violation.
 
 ## Performance
 
@@ -162,8 +182,7 @@ JavaScript; all pages share about 6 KB of CSS.
 
 ## Known gaps
 
-- No browser-driven end-to-end tests (for example Playwright); the real-stack script and unit tests
-  cover the API and the rendering code, and the pages were walked through by hand and audited with axe.
+- Browser tests run in Chromium only, at desktop size; the mobile layout is not covered.
 - Screen-reader behaviour was checked structurally (roles, names, live regions) but not with a real
   screen reader.
 - Only a dark theme exists.

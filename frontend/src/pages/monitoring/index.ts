@@ -10,10 +10,36 @@ export interface SecurityEvent {
   details?: Record<string, unknown>;
 }
 
+export interface UsageDay {
+  day: string;
+  answers: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+}
+
+export interface Usage {
+  days: number;
+  by_day: UsageDay[];
+  no_answer_rate: number;
+}
+
 export interface Summary {
   total_events: number;
   by_type: Record<string, number>;
+  usage?: Usage;
   [key: string]: unknown;
+}
+
+/** "12.3%" for a share between 0 and 1. */
+export function formatShare(share: number): string {
+  return `${(share * 100).toFixed(1)}%`;
+}
+
+/** Small amounts keep their significant digits ($0.0009), larger ones show cents. */
+export function formatCost(usd: number): string {
+  if (usd === 0) return "0";
+  return usd < 0.01 ? usd.toPrecision(2) : usd.toFixed(2);
 }
 
 type Tone = "indexed" | "open" | "failed" | "closed" | "in_progress";
@@ -81,8 +107,33 @@ export function initMonitoring(): void {
   const limitFilter = byId<HTMLSelectElement>("limit-filter");
   const live = byId<HTMLInputElement>("live");
   const status = byId("status");
+  const usageBody = byId("usage-body");
+  const usageNote = byId("usage-note");
   let timer: number | undefined;
   let knownTypes = "";
+
+  function renderUsage(usage: Usage | undefined): void {
+    clear(usageBody);
+    if (!usage || usage.by_day.length === 0) {
+      usageNote.textContent = "No answered questions with token counts yet.";
+      usageBody.appendChild(el("tr", {}, [el("td", { class: "text-muted", text: "No data.", attrs: { colspan: "5" } })]));
+      return;
+    }
+    usageNote.textContent =
+      `Share of questions with nothing readable found: ${formatShare(usage.no_answer_rate)}. ` +
+      "Counts are from the model service; cost uses the configured prices (0 when unset).";
+    for (const day of usage.by_day) {
+      usageBody.appendChild(
+        el("tr", {}, [
+          el("td", { class: "whitespace-nowrap", text: day.day }),
+          el("td", { class: "font-mono", text: String(day.answers) }),
+          el("td", { class: "font-mono", text: String(day.prompt_tokens) }),
+          el("td", { class: "font-mono", text: String(day.completion_tokens) }),
+          el("td", { class: "font-mono", text: formatCost(day.cost_usd) }),
+        ]),
+      );
+    }
+  }
 
   function renderSummary(summary: Summary): void {
     clear(cards);
@@ -150,7 +201,9 @@ export function initMonitoring(): void {
       if (typeFilter.value) query.set("type", typeFilter.value);
       const [summary, events] = await Promise.all([api("/monitoring/summary"), api(`/monitoring/events?${query}`)]);
       if (!summary.ok || !events.ok) throw new Error("request failed");
-      renderSummary((await summary.json()) as Summary);
+      const summaryData = (await summary.json()) as Summary;
+      renderSummary(summaryData);
+      renderUsage(summaryData.usage);
       renderEvents((await events.json()) as SecurityEvent[]);
       status.textContent = `Updated ${formatTime(new Date().toISOString())}`;
     } catch {

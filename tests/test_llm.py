@@ -14,7 +14,7 @@ import pytest
 from leyline.adapters.circuit_breaker import CircuitBreaker
 from leyline.adapters.llm_openai import OpenAICompatibleChatModel
 from leyline.config import Settings
-from leyline.ports.llm import ModelUnavailableError
+from leyline.ports.llm import ModelUnavailableError, Usage
 from leyline.services import llm as prompts
 from leyline.wiring import build_chat_model
 from tests.support import CSRF_HEADER, PERSONAS, login_as, make_settings
@@ -32,6 +32,7 @@ class FakeChatServer:
         drop_after=None,
         delay=0.0,
         empty=False,
+        usage=None,  # (prompt, completion) tokens the server reports
     ):
         self.requests: list[dict] = []
         self.status = status
@@ -74,26 +75,46 @@ class FakeChatServer:
                         }
                         self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
                         self.wfile.flush()
+                    wanted = (body.get("stream_options") or {}).get("include_usage")
+                    if usage is not None and wanted:
+                        last = {
+                            "id": "c",
+                            "object": "chat.completion.chunk",
+                            "created": 0,
+                            "model": "m",
+                            "choices": [],
+                            "usage": {
+                                "prompt_tokens": usage[0],
+                                "completion_tokens": usage[1],
+                                "total_tokens": sum(usage),
+                            },
+                        }
+                        self.wfile.write(f"data: {json.dumps(last)}\n\n".encode())
                     self.wfile.write(b"data: [DONE]\n\n")
                     return
-                payload = json.dumps(
-                    {
-                        "id": "c",
-                        "object": "chat.completion",
-                        "created": 0,
-                        "model": "m",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "finish_reason": "stop",
-                                "message": {
-                                    "role": "assistant",
-                                    "content": "" if empty else content,
-                                },
-                            }
-                        ],
+                reply = {
+                    "id": "c",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": "" if empty else content,
+                            },
+                        }
+                    ],
+                }
+                if usage is not None:
+                    reply["usage"] = {
+                        "prompt_tokens": usage[0],
+                        "completion_tokens": usage[1],
+                        "total_tokens": sum(usage),
                     }
-                ).encode()
+                payload = json.dumps(reply).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
@@ -183,6 +204,49 @@ def test_stream_yields_pieces_in_order(chat_server):
     pieces = list(model_for(server).stream("s", "u"))
     assert pieces == ["a", "b", "c"]
     assert server.requests[0]["body"]["stream"] is True
+
+
+def test_a_blocking_call_fills_in_the_providers_token_counts(chat_server):
+    server = chat_server(usage=(120, 30))
+    usage = Usage()
+    model_for(server).complete("s", "u", usage)
+    assert (usage.prompt_tokens, usage.completion_tokens, usage.reported) == (
+        120,
+        30,
+        True,
+    )
+
+
+def test_a_streamed_call_asks_for_and_fills_in_the_token_counts(chat_server):
+    server = chat_server(stream_pieces=["a", "b"], usage=(200, 7))
+    usage = Usage()
+    assert list(model_for(server).stream("s", "u", usage)) == ["a", "b"]
+    assert server.requests[0]["body"]["stream_options"] == {"include_usage": True}
+    assert (usage.prompt_tokens, usage.completion_tokens, usage.reported) == (
+        200,
+        7,
+        True,
+    )
+
+
+def test_a_server_that_reports_nothing_leaves_the_counts_unreported(chat_server):
+    server = chat_server(stream_pieces=["a"])
+    usage = Usage()
+    list(model_for(server).stream("s", "u", usage))
+    assert usage.reported is False and usage.prompt_tokens == 0
+
+
+def test_stream_usage_can_be_switched_off_for_servers_that_reject_it(chat_server):
+    server = chat_server(stream_pieces=["a"], usage=(1, 1))
+    usage = Usage()
+    list(model_for(server, stream_usage=False).stream("s", "u", usage))
+    assert "stream_options" not in server.requests[0]["body"]
+    assert usage.reported is False
+
+
+def test_usage_is_not_required(chat_server):
+    server = chat_server(usage=(5, 5))
+    assert model_for(server).complete("s", "u") == "Reset it in the portal."
 
 
 def test_a_server_error_becomes_model_unavailable_without_leaking_detail(chat_server):

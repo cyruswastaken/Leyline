@@ -20,12 +20,14 @@ All commands run from the repository root in Windows PowerShell after `az login`
 
 | Script | Purpose |
 | --- | --- |
-| `./infra/deploy.ps1` | Deploy or update everything (`-WhatIf` previews, `-InfraOnly`, `-Seed`, `-ScaleToZero`) |
+| `./infra/deploy.ps1` | Deploy or update everything (`-WhatIf` previews, `-InfraOnly`, `-Seed`, `-ScaleToZero`, `-ManagedIdentity`) |
 | `./infra/teardown.ps1` | Delete `rg-leyline-app` and purge the Key Vault (`-IncludeModels`, `-Force`) |
 | `./infra/entra.ps1` | Entra app, roles, groups, secret, demo users (`-DemoUsers`, `-ResetPasswords`, `-NewSecret`, `-PruneRedirects`, `-Remove`) |
 | `./infra/budget.ps1` | Monthly cost alert |
 | `./infra/logs.ps1` | Container logs without any CLI extension (`-App`, `-Minutes`, `-Errors`, `-System`, `-NoProbes`) |
 | `./infra/ci-identity.ps1` | The identity and GitHub environment for the Deploy workflow (`-SkipGitHub`, `-Remove`) |
+| `./infra/alerts.ps1` | The action group (your email) that alerts notify: `-Email` |
+| `./infra/restore-drill.ps1` | Prove the database backup restores: temporary server, checks, deleted again (`-MinutesAgo`, `-WhatIf`) |
 
 ## 1. Deploy, update, tear down, rebuild
 
@@ -354,3 +356,78 @@ old revision keeps serving. The worker briefly runs two revisions side by side w
   by redeploying the previous template (`./infra/deploy.ps1` from the previous commit), not by changing the image.
 - The Deploy workflow cannot deploy an old image (it always builds the commit it was started from); that is why the
   direct route exists.
+
+## 16. Alerts: what each one means and what to do
+
+The alert rules are in the template (`infra/modules/monitoring.bicep`) and notify the action group made by
+`./infra/alerts.ps1 -Email <you>` (the address is not kept in the repository; `deploy.ps1` and the Deploy
+workflow attach the group to every rule). The objectives behind them are in [SLO.md](SLO.md). Each section below
+is named in the alert's description. In the portal: Monitor > Alerts.
+
+### The site is down
+Alert `leyline-site-down`: no successful `/readyz` in 10 minutes. Open `/readyz` (section 2) for the check that fails,
+then read `./infra/logs.ps1 -App web -NoProbes -Errors -Minutes 30`. If the last deploy caused it, roll back (section
+15). If the site is scaled to zero (`-ScaleToZero`) this alert fires by design; keep one replica for alerting.
+
+### Server errors
+Alert `leyline-server-errors`: five or more 5xx in 10 minutes. `./infra/logs.ps1 -App web -NoProbes -Errors -Minutes 30`
+shows the route and the error class. A burst right after a deploy means roll back (section 15); a steady stream of
+`/readyz` 503s means a dependency is down (section 2).
+
+### Answers are slow
+Alert `leyline-slow-first-token`: the 95th percentile time to first token is over 2.5 s with at least 10 answers in
+30 minutes. The stages are on each event (`./infra/logs.ps1 -App web -NoProbes -Minutes 30`, look for
+`NORMAL_REQUEST` lines with `first_token_ms`) and the model's own speed is the usual cause: see section 9. Check
+`leyline-model-throttled` too, and whether many follow-ups needed a rewrite (`rewrite_skipped` false on `RETRIEVAL`
+events).
+
+### The assistant is unavailable
+Alerts `leyline-model-errors` and `leyline-model-throttled`: `MODEL_ERROR` events. The `reason` on each line says
+which: `circuit_open` (the app stopped calling the model after repeated failures and retries after 30 s),
+`timeout`, `http_429` (the deployment's quota of 50 requests a minute is reached: wait, or raise the capacity in
+`main.bicep`), `http_5xx` (the model service is unwell: check the Azure status page). Answers degrade to a
+clear message and search still works. Section 9 has the rest.
+
+### Security events are dropped
+Alert `leyline-event-store-failing`: an `EVENT_STORE_FAILED` line. `reason` is `queue_full` (events arrived faster
+than the database took them; the stdout line is still the record, and the cause is usually a slow database,
+section 6), `store_failed` (the database refused the insert) or `sink_closed` (the app is shutting down). Nothing is
+lost from the logs; the append-only table is what has a gap.
+
+### The worker is silent
+Alert `leyline-worker-silent`: no "worker heartbeat" line from `leyline-worker` in 10 minutes (it logs one a minute).
+Uploads will stay "processing". `./infra/logs.ps1 -App leyline-worker -System -Minutes 30` shows crash loops and
+image pull errors; section 5 has the rest. Restart it with
+`az containerapp revision restart -g rg-leyline-app -n leyline-worker --revision <name>`.
+
+### The database is busy or full
+Alerts `leyline-database-cpu` (above 80% for 15 minutes) and `leyline-database-storage` (above 85% full). The
+burstable B1ms tier runs out of CPU credits under sustained load: check the load, then scale the server up in the
+portal. Storage does not grow by itself (`autoGrow` is off): raise `storageSizeGB` in `data.bicep` and redeploy, or
+remove old data (conversations: `CONVERSATION_RETENTION_DAYS`).
+
+## 17. Prove the database backup restores (the restore drill)
+
+Postgres keeps point-in-time backups for 7 days, but a backup nobody has restored is a hope. Run this after the first
+deployment and whenever the database setup changes:
+
+```powershell
+./infra/restore-drill.ps1 -WhatIf          # shows the plan, creates nothing
+./infra/restore-drill.ps1                  # restores to 10 minutes ago, checks it, deletes the copy
+./infra/restore-drill.ps1 -MinutesAgo 120  # a point further back
+```
+
+It restores into a **new** temporary server (`leyline-pg-drill-<random>`) and never changes the live one. It signs
+in to the copy as you (it makes you an administrator of the copy only) and runs the read-only checks in
+`scripts/restore_check.py`: schema revision, live documents and chunks, no live document without an access list, the
+append-only trigger, the pgvector extension. It prints the **recovery time** (how long until the checks passed) and
+the **recovery point** (how old the newest restorable data was), then deletes the copy. It costs a second burstable
+server for roughly 15 to 30 minutes (well under one US dollar) and opens a firewall rule on the copy for your
+current public address (looked up at api.ipify.org unless you pass `-ClientIp`).
+
+If the copy is left behind (the script says so), remove it: `az postgres flexible-server delete -g rg-leyline-app -n
+<name> --yes`. If a check fails, the backup is not trustworthy: do not rely on it until the cause is understood.
+
+**Restoring for real** (the live database is damaged): restore to a new server the same way (the drill commands, without
+`-WhatIf` and with `-Keep`), check it, then point the app at it by redeploying with that server's address. Do not
+delete the damaged one until the new one is serving.

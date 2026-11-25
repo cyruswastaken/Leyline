@@ -14,12 +14,14 @@
     }
   },
   "hybrid": {
+    "_comment": "Re-baselined on the 126-case set (2026-11-24): recall@1 0.910, recall@3 0.987, recall@5 1.000, mrr 0.949, refusal_rate 0.833, near_refusal_rate 0.083. near_refusal_rate is the known weak spot (12 unanswerable questions next to covered topics); the floor is the baseline, to be raised as refusals improve.",
     "min": {
-      "recall@1": 0.85,
-      "recall@3": 0.95,
+      "recall@1": 0.88,
+      "recall@3": 0.96,
       "recall@5": 0.98,
-      "mrr": 0.9,
+      "mrr": 0.92,
       "refusal_rate": 0.75,
+      "near_refusal_rate": 0.05,
       "restricted_pass_rate": 1.0
     },
     "max": {

@@ -6,9 +6,10 @@ this module only decides what the model is told.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
 
-from leyline.ports.llm import ChatModel
+from leyline.ports.llm import ChatModel, Usage
 
 SYSTEM_PROMPT = """
 You are Leyline, a secure enterprise IT helpdesk assistant.
@@ -56,16 +57,34 @@ Knowledge-base source:
 """
 
 
-def generate_answer(query: str, context: str, source: str, *, model: ChatModel) -> str:
+def generate_answer(
+    query: str,
+    context: str,
+    source: str,
+    *,
+    model: ChatModel,
+    usage: Usage | None = None,
+) -> str:
     """Raises ``ModelUnavailableError`` when the model cannot answer."""
-    return model.complete(SYSTEM_PROMPT, build_user_prompt(query, context, source))
+    prompt = build_user_prompt(query, context, source)
+    if usage is None:
+        return model.complete(SYSTEM_PROMPT, prompt)
+    return model.complete(SYSTEM_PROMPT, prompt, usage)
 
 
 def stream_answer(
-    query: str, context: str, source: str, *, model: ChatModel
+    query: str,
+    context: str,
+    source: str,
+    *,
+    model: ChatModel,
+    usage: Usage | None = None,
 ) -> Iterator[str]:
     """Like ``generate_answer`` but yields the answer in pieces."""
-    return model.stream(SYSTEM_PROMPT, build_user_prompt(query, context, source))
+    prompt = build_user_prompt(query, context, source)
+    if usage is None:
+        return model.stream(SYSTEM_PROMPT, prompt)
+    return model.stream(SYSTEM_PROMPT, prompt, usage)
 
 
 REWRITE_PROMPT = """
@@ -77,10 +96,24 @@ If the last question is already standalone, repeat it unchanged.
 """
 
 
-def rewrite_query(history: list[str], message: str, *, model: ChatModel) -> str:
+def rewrite_query(
+    history: list[str], message: str, *, model: ChatModel, usage: Usage | None = None
+) -> str:
     """A standalone version of ``message`` for retrieval. Raises
     ``ModelUnavailableError``; callers fall back to the original message."""
     earlier = "\n".join(f"- {question}" for question in history)
     prompt = f"Earlier questions:\n{earlier}\n\nLast question:\n{message}"
-    rewritten = " ".join(model.complete(REWRITE_PROMPT, prompt).split())
-    return rewritten.strip("\"' ")
+    reply = (
+        model.complete(REWRITE_PROMPT, prompt)
+        if usage is None
+        else model.complete(REWRITE_PROMPT, prompt, usage)
+    )
+    return " ".join(reply.split()).strip("\"' ")
+
+
+# Identifies the instructions given to the model, so every stored answer says which
+# wording produced it. Derived from the prompts themselves: editing either one
+# changes it, with nothing to remember to bump.
+PROMPT_VERSION = hashlib.sha256(
+    (SYSTEM_PROMPT + REWRITE_PROMPT).encode("utf-8")
+).hexdigest()[:12]

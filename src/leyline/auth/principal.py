@@ -7,8 +7,8 @@ URL, query string, body or header may ever construct one.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -115,6 +115,22 @@ def principal_from_claims(
         roles=_parse_roles(_str_list(claims.get(roles_claim))),
         groups_incomplete=overage,
     )
+
+
+def with_resolved_groups(
+    principal: Principal,
+    group_ids: Iterable[str],
+    group_names: Mapping[str, str],
+) -> Principal:
+    """The same principal with the groups an identity provider's directory returned
+    (after an "overage" token left them out). As for groups in a token, an ID that
+    nobody mapped to a name is ignored, so a lookup can never add a group that was
+    not explicitly given a meaning. With no mapping there is nothing safe to
+    translate, and the principal stays incomplete."""
+    if not group_names:
+        return principal
+    names = {group_names[g] for g in group_ids if g in group_names}
+    return replace(principal, groups=frozenset(names), groups_incomplete=False)
 
 
 def _as_str(value: object) -> str:

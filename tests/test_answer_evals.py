@@ -64,6 +64,46 @@ def test_a_figure_the_user_typed_and_the_answer_repeats_is_not_invented():
     assert unsupported_numbers("It costs 99 [1].", context, question) == ["99"]
 
 
+def test_a_citation_on_a_supported_sentence_is_grounded():
+    from leyline.evals.answers import grounding, ungrounded_citations
+
+    source = "Reset your password in the self-service portal at the helpdesk."
+    answer = "Reset your password in the self-service portal [1]."
+    [(number, share)] = grounding(answer, [source])
+    assert number == 1 and share > 0.8
+    assert ungrounded_citations(answer, [source]) == []
+
+
+def test_a_citation_pasted_onto_an_unrelated_sentence_is_flagged():
+    from leyline.evals.answers import ungrounded_citations
+
+    source = "Reset your password in the self-service portal at the helpdesk."
+    answer = "Parking permits are renewed every January for company vehicles [1]."
+    assert ungrounded_citations(answer, [source]) == [1]
+
+
+def test_grounding_is_checked_per_sentence_and_per_cited_source():
+    from leyline.evals.answers import ungrounded_citations
+
+    sources = [
+        "Reset your password in the self-service portal.",
+        "Annual leave is booked through the people system.",
+    ]
+    answer = (
+        "Reset your password in the self-service portal [1].\n"
+        "Annual leave is booked through the people system [2].\n"
+        "Reset your password in the self-service portal [2]."  # wrong source
+    )
+    assert ungrounded_citations(answer, sources) == [2]
+
+
+def test_text_without_citations_or_with_unknown_numbers_has_nothing_to_check():
+    from leyline.evals.answers import grounding
+
+    assert grounding("No citations here at all.", ["source text"]) == []
+    assert grounding("Something said [7].", ["only one source"]) == []
+
+
 def test_spelling_out_an_invented_figure_does_not_hide_it():
     context = "You get 25 days of leave."
     assert unsupported_numbers("You get forty days [1].", context) == ["40"]

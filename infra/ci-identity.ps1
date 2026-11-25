@@ -15,10 +15,12 @@
                   rg-leyline-app    custom role "Leyline App Deployer": everything except deleting the
                                     resource group and except writing role assignments; plus
                                     "Role Based Access Control Administrator" limited by a condition to
-                                    the two roles the template assigns (AcrPull, Key Vault Secrets User);
-                                    plus AcrPush to push the image
+                                    the three roles the template assigns (AcrPull, Key Vault Secrets
+                                    User, Storage Blob Data Contributor); plus AcrPush to push the image
                   leyline-openai    "Cognitive Services Contributor" on that one account (model
-                                    deployments and the key)
+                                    deployments and the key), and "Role Based Access Control
+                                    Administrator" limited by a condition to one role, Cognitive
+                                    Services OpenAI User (so the app's identity can call the models)
     GitHub      environment "azure" that requires an approval from a named reviewer and accepts only the
                 main branch, with the three non-secret ids as environment variables
 
@@ -52,8 +54,13 @@ $ErrorActionPreference = 'Stop'
 $RoleRbacAdministrator = 'f58310d9-a9f6-439a-9e8d-f62e7b41a168'
 $RoleAcrPush = '8311e382-0749-4cb8-b61a-304f252e45ec'
 $RoleCognitiveServicesContributor = '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68'
-# The only two roles the template assigns (see infra/modules/platform.bicep): AcrPull, Key Vault Secrets User.
-$AssignableByCi = @('7f951dda-4ed3-4680-a7ca-43fe172d538d', '4633458b-17de-408a-b874-0445c86b69e6')
+# The only roles the template assigns inside the app group (see infra/modules/platform.bicep): AcrPull,
+# Key Vault Secrets User and Storage Blob Data Contributor (the last only when the app signs in to storage
+# with its managed identity, decision 0014).
+$AssignableByCi = @('7f951dda-4ed3-4680-a7ca-43fe172d538d', '4633458b-17de-408a-b874-0445c86b69e6', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+# The only role the template assigns on the Azure OpenAI account (infra/modules/openai-access.bicep):
+# Cognitive Services OpenAI User, so the app's identity can call the models instead of holding a key.
+$AssignableOnOpenAi = @('5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
 
 function Invoke-Rest([string]$Method, [string]$Url, $Body = $null, [switch]$Arm) {
     $a = @('rest', '--method', $Method, '--url', $Url, '--headers', 'Content-Type=application/json')
@@ -148,8 +155,8 @@ if (-not $app) {
     Write-Host "  - create custom role '$starterName' on the subscription (start/read deployments, create/update resource groups, no delete)"
     Write-Host "  - create custom role '$deployerName' (everything except deleting the resource group and writing role assignments)"
     Write-Host "  - grant '$starterName' on the subscription"
-    Write-Host "  - grant '$deployerName', AcrPush and a CONDITIONED role-assignment right (only AcrPull and Key Vault Secrets User) on $AppResourceGroup"
-    Write-Host "  - grant Cognitive Services Contributor on the single account $OpenAiAccount"
+    Write-Host "  - grant '$deployerName', AcrPush and a CONDITIONED role-assignment right (only AcrPull, Key Vault Secrets User and Storage Blob Data Contributor) on $AppResourceGroup"
+    Write-Host "  - grant Cognitive Services Contributor on the single account $OpenAiAccount, and a CONDITIONED role-assignment right on it (only Cognitive Services OpenAI User)"
     if (-not $SkipGitHub) {
         Write-Host "  - GitHub: environment '$EnvironmentName' on $Repository requiring approval by a named reviewer, main branch only,"
         Write-Host '    plus the variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (ids, not secrets)'
@@ -205,20 +212,24 @@ function Grant([string]$Scope, [string]$RoleDefinitionId, [string]$What, [string
     }
 }
 
-# Role assignments inside the app group may only be for the two roles the template uses.
+# Role assignments inside the app group may only be for the three roles the template uses.
 $ids = $AssignableByCi -join ', '
 $condition = "((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$ids})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$ids}))"
+# On the OpenAI account the only assignable role is Cognitive Services OpenAI User.
+$openAiIds = $AssignableOnOpenAi -join ', '
+$openAiCondition = "((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$openAiIds})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$openAiIds}))"
 
 if ($sp) {
     Grant $subScope $starterId "'$starterName' on the subscription"
     $groupExists = (& az group exists --name $AppResourceGroup) -eq 'true'
     if ($groupExists) {
         Grant $appScope $deployerId "'$deployerName' on $AppResourceGroup"
-        Grant $appScope $RoleRbacAdministrator "role-assignment rights on $AppResourceGroup, limited to AcrPull and Key Vault Secrets User" $condition
+        Grant $appScope $RoleRbacAdministrator "role-assignment rights on $AppResourceGroup, limited to AcrPull, Key Vault Secrets User and Storage Blob Data Contributor" $condition
         Grant $appScope $RoleAcrPush "AcrPush on $AppResourceGroup"
     }
     else { Write-Warning "$AppResourceGroup does not exist now; run this script again after the environment is built." }
     Grant $openAiScope $RoleCognitiveServicesContributor "Cognitive Services Contributor on $OpenAiAccount"
+    Grant $openAiScope $RoleRbacAdministrator "role-assignment rights on $OpenAiAccount, limited to Cognitive Services OpenAI User" $openAiCondition
 }
 
 # --- GitHub environment ---------------------------------------------------------------------------------------

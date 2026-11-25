@@ -11,6 +11,12 @@ param tags object
 @secure()
 param postgresAdminPassword string
 
+@description('Postgres and Redis accept the container identity instead of a password and a key. Password sign-in to Postgres and key access to Redis are then switched off.')
+param useManagedIdentity bool = false
+param identityName string = ''
+param identityPrincipalId string = ''
+param tenantId string = subscription().tenantId
+
 var postgresName = 'leyline-pg-${suffix}'
 var redisName = 'leyline-redis-${suffix}'
 
@@ -24,8 +30,9 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   }
   properties: {
     version: '16'
-    administratorLogin: 'leyline'
-    administratorLoginPassword: postgresAdminPassword
+    // No administrator password exists when the identity is the only way in.
+    administratorLogin: useManagedIdentity ? null : 'leyline'
+    administratorLoginPassword: useManagedIdentity ? null : postgresAdminPassword
     storage: {
       storageSizeGB: 32
       autoGrow: 'Disabled'
@@ -37,10 +44,26 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
     highAvailability: { mode: 'Disabled' }
     network: { publicNetworkAccess: 'Enabled' }
     authConfig: {
-      activeDirectoryAuth: 'Disabled'
-      passwordAuth: 'Enabled'
+      activeDirectoryAuth: useManagedIdentity ? 'Enabled' : 'Disabled'
+      passwordAuth: useManagedIdentity ? 'Disabled' : 'Enabled'
+      tenantId: useManagedIdentity ? tenantId : null
     }
   }
+}
+
+// The identity is the database administrator: it runs the migrations (including the
+// pgvector extension) and the app. The user name to sign in with is the identity's name.
+// One identity for everything is simple and is the trade-off ADR 0014 records; a split
+// into a migration identity and a least-privilege runtime identity is the next step.
+resource databaseAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2024-08-01' = if (useManagedIdentity) {
+  parent: postgres
+  name: identityPrincipalId
+  properties: {
+    principalType: 'ServicePrincipal'
+    principalName: identityName
+    tenantId: tenantId
+  }
+  dependsOn: [allowAzure]
 }
 
 resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
@@ -93,9 +116,22 @@ resource redisDb 'Microsoft.Cache/redisEnterprise/databases@2025-04-01' = {
     port: 10000
     clusteringPolicy: 'EnterpriseCluster'
     evictionPolicy: 'VolatileLRU'
-    accessKeysAuthentication: 'Enabled'
+    accessKeysAuthentication: useManagedIdentity ? 'Disabled' : 'Enabled'
   }
 }
 
+// With keys off, Redis signs the identity in by its object id (the user name) and an Entra
+// token (the password). The built-in "default" policy gives full data access.
+resource redisIdentity 'Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2025-04-01' = if (useManagedIdentity) {
+  parent: redisDb
+  name: 'leylineidentity'
+  properties: {
+    accessPolicyName: 'default'
+    user: { objectId: identityPrincipalId }
+  }
+}
+
+output postgresName string = postgres.name
 output postgresHost string = postgres.properties.fullyQualifiedDomainName
 output redisName string = redis.name
+output redisHost string = redis.properties.hostName

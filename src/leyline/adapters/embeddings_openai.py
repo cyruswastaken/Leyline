@@ -7,7 +7,7 @@ name differ.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from openai import OpenAI
 
@@ -17,7 +17,7 @@ class OpenAICompatibleEmbedder:
         self,
         *,
         base_url: str,
-        api_key: str,
+        api_key: str | Callable[[], str],
         model: str,
         dimensions: int | None = None,
         timeout_seconds: float = 30,

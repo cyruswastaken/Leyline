@@ -1,0 +1,20 @@
+# Optional cross-encoder reranker (see docs/EVALUATION.md, "Reranking").
+#
+#   docker compose -f compose.yaml -f compose.rerank.yaml up -d rerank
+#   RERANK_BASE_URL=http://localhost:8081 RERANK_MODEL=BAAI/bge-reranker-base ...
+#
+# Serves BAAI/bge-reranker-base (MIT licence, about 1.1 GB, downloaded on first start
+# into the `rerank-data` volume) with Hugging Face Text Embeddings Inference on CPU.
+# Bound to loopback: the reranker has no login, so it is never published to the network.
+services:
+  rerank:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    command: ["--model-id", "BAAI/bge-reranker-base", "--max-batch-tokens", "16384"]
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - rerank-data:/data
+    restart: unless-stopped
+
+volumes:
+  rerank-data:

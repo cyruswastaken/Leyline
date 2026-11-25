@@ -27,6 +27,8 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
+from leyline.adapters.circuit_breaker import CircuitBreaker
+from leyline.adapters.rerank_http import HttpReranker
 from leyline.adapters.search_postgres import PostgresSearchIndex, SearchOptions
 from leyline.config import Settings, get_settings
 from leyline.db.database import Database
@@ -47,13 +49,15 @@ from leyline.evals.golden import GoldenCase, GoldenError, load_acl_oracle, load_
 from leyline.evals.runner import (
     DEFAULT_LIMIT,
     EvalReport,
+    RerankSettings,
     check_thresholds,
     format_report,
     run_eval,
 )
 from leyline.ingestion.service import IngestionService
 from leyline.ports.embeddings import Embedder
-from leyline.ports.search import SearchIndex
+from leyline.ports.rerank import Reranker, Scored
+from leyline.ports.search import SearchHit, SearchIndex
 from leyline.seed import seed_corpus
 from leyline.wiring import (
     build_blob_store,
@@ -164,6 +168,70 @@ def _format_sweep(rows: list[dict[str, float]]) -> str:
     return "\n".join(lines)
 
 
+class _MemoReranker:
+    """Remembers scores so a sweep over floors asks the service once per question."""
+
+    def __init__(self, inner: Reranker) -> None:
+        self._inner = inner
+        self._memo: dict[tuple[str, tuple[uuid.UUID, ...]], list[Scored]] = {}
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    def rerank(self, query: str, hits: Sequence[SearchHit]) -> list[Scored]:
+        key = (query, tuple(h.chunk_id for h in hits))
+        if key not in self._memo:
+            self._memo[key] = self._inner.rerank(query, hits)
+        return self._memo[key]
+
+
+def _rerank_sweep(
+    args: argparse.Namespace,
+    search: SearchIndex,
+    cases: Sequence[GoldenCase],
+    *,
+    refs: Mapping[uuid.UUID, str],
+    acl: Mapping[str, frozenset[str]],
+) -> list[dict[str, float]]:
+    reranker = _MemoReranker(
+        HttpReranker(
+            base_url=args.rerank_url,
+            model=args.rerank_model,
+            timeout_seconds=30,
+            breaker=CircuitBreaker(failure_threshold=1000),
+        )
+    )
+    rows: list[dict[str, float]] = []
+    for floor in (float(x) for x in args.rerank_floors.split(",")):
+        report = run_eval(
+            search,
+            cases,
+            refs=refs,
+            acl=acl,
+            rerank=RerankSettings(
+                reranker, candidates=args.rerank_candidates, min_score=floor
+            ),
+        )
+        rows.append({"min_score": floor, **report.summary})
+    return rows
+
+
+def _format_rerank(rows: list[dict[str, float]]) -> str:
+    lines = [
+        "\nreranker sweep (candidates scored by the cross-encoder, best 5 kept):",
+        "  floor  recall@1 recall@5   mrr   refusal near-refusal restricted leaks",
+    ]
+    for r in rows:
+        lines.append(
+            f"  {r['min_score']:.2f}    {r['recall@1']:.3f}    {r['recall@5']:.3f}"
+            f"   {r['mrr']:.3f}   {r['refusal_rate']:.3f}      "
+            f"{r.get('near_refusal_rate', 0.0):.3f}       "
+            f"{r['restricted_pass_rate']:.3f}    {int(r['acl_leaks'])}"
+        )
+    return "\n".join(lines)
+
+
 def wait_for_idle_queue(database: Database, timeout_seconds: float) -> bool:
     """Block until no ingestion job is queued or running.
 
@@ -247,6 +315,19 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="also evaluate follow-up questions (default file: evals/followups.jsonl)",
     )
+    parser.add_argument(
+        "--rerank-url",
+        default=None,
+        help="also evaluate with this /rerank service applied after search, "
+        "at several minimum scores (docs/EVALUATION.md)",
+    )
+    parser.add_argument("--rerank-model", default="reranker")
+    parser.add_argument(
+        "--rerank-floors",
+        default="0,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8",
+        help="comma-separated minimum scores to try",
+    )
+    parser.add_argument("--rerank-candidates", type=int, default=15)
     args = parser.parse_args(argv)
 
     if args.embeddings and args.record_embeddings:
@@ -319,6 +400,15 @@ def main(argv: list[str] | None = None) -> int:
                 acl=acl,
                 limit=args.limit,
             )
+            if args.rerank_url:
+                rerank_rows = _rerank_sweep(
+                    args,
+                    build_search(args.index, database, embedder, options),
+                    cases,
+                    refs=refs,
+                    acl=acl,
+                )
+                print(_format_rerank(rerank_rows))
             if args.followups:
                 try:
                     followup_cases = load_followups(args.followups, acl)

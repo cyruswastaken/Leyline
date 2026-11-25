@@ -68,8 +68,8 @@ exists on the Azure for Students subscription and was read back to confirm all f
 - **Groups to document access:** Entra's `groups` claim carries group object ids, not names, and the free
   tier cannot send names. The script saves the id-to-name map; `deploy.ps1` passes it as `OIDC_GROUP_NAMES`
   and the app translates ids to the names documents use. With a map configured, a group that is not in it
-  grants nothing, and a token entry that merely spells `hr` is ignored. Overage (more than 200 groups) still
-  fails closed.
+  grants nothing, and a token entry that merely spells `hr` is ignored. Overage (more than 200 groups) fails closed,
+  or, with `OIDC_RESOLVE_GROUP_OVERAGE` and an administrator's consent to `GroupMember.Read.All`, is resolved through Microsoft Graph (decision 0016; not yet tried against a real tenant).
 - **Re-running is safe:** the script keeps redirect addresses that are already registered (an early version replaced the list and silently removed the Azure address, which made every Azure sign-in fail with a redirect mismatch). Group and role assignments are retried (a user created a moment ago is not yet known everywhere), "already assigned" counts as success, any real failure is reported, and the demo users are verified against the expected groups and roles at the end (the script exits with an error if anything is missing). `-DemoUsers -ResetPasswords` also gives users that already exist a new password, for when the password file is lost.
 - **The client secret** is created for 180 days and stored encrypted for your Windows account in
   `infra/.entra.local.json` (git-ignored); it is never printed, and `deploy.ps1` reads it from there. Demo user
@@ -106,7 +106,7 @@ For the current application code, configure (see [`.env.example`](../.env.exampl
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | Entra app registration (secret to Key Vault) |
 | `OIDC_GROUPS_CLAIM` / `OIDC_ROLES_CLAIM` | Claim names (`groups` / `roles`) |
 | `DATABASE_URL` | `postgresql+pg8000://user:password@host:5432/leyline` (secret; Key Vault) |
-| `BLOB_CONNECTION_STRING` | Storage account connection string (secret). Managed identity replaces it in Phase 8 |
+| `BLOB_CONNECTION_STRING` | Storage account connection string (secret). Replaced by `BLOB_ACCOUNT_URL` with `-ManagedIdentity` (decision 0014) |
 | `BLOB_CONTAINER` | Container for original uploads (default `leyline-documents`) |
 | `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_API_KEY` | Optional; any OpenAI-compatible embeddings endpoint (Azure OpenAI v1 API, OpenAI, Ollama) |
 | `REDIS_URL` | `rediss://:<key>@<name>.redis.cache.windows.net:6380/0` |
@@ -121,7 +121,13 @@ The local Keycloak sign-in pages use the repository's `leyline` login theme. Wit
 
 ## Container
 
-The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI with the full sign-in flow against Keycloak. App roles and group-restricted answers have been checked against a real Entra tenant (Phase 8). Group overage (a user in too many groups) is detected and fails closed, but resolving it through Microsoft Graph is not built and has not been tested.
+The image is built from the repository `Dockerfile` (multi-stage, non-root, gunicorn on port 8000) and is validated in CI with the full sign-in flow against Keycloak. App roles and group-restricted answers have been checked against a real Entra tenant (Phase 8). Group overage (a user in too many groups) fails closed; resolving it through Microsoft Graph is built and tested against a fake Graph, but off until an administrator consents to `GroupMember.Read.All` (decision 0016).
+
+**Managed identity (no data-service keys).** `./infra/deploy.ps1 -ManagedIdentity` (a fresh deployment or a rebuild) makes Postgres, Redis, Blob storage and the models accept the container identity and creates no key for any of them; the only secret left in Key Vault is the Entra client secret. It is built and tested, not yet proven on a rebuilt environment (decision 0014). Locally the services keep their keys.
+
+**Alerts and objectives.** The template creates alert rules (site down, 5xx, slow first token, model errors and throttling, dropped events, a silent worker, database CPU and storage). Run `./infra/alerts.ps1 -Email you@example.com` once so they email you. [SLO.md](SLO.md) has the objectives and queries, RUNBOOKS sections 16 and 17 say what to do when one fires and how to prove the backup restores.
+
+**Safer updates.** The Deploy workflow now refuses a destructive database migration unless you tick a box, smoke-tests the signed-out site after deploying, and puts the previous image back if the release fails its checks.
 
 ## Monitoring
 

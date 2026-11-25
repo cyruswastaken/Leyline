@@ -9,14 +9,14 @@ breaker so an outage degrades the answer instead of breaking the request.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import openai
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from leyline.adapters.circuit_breaker import CircuitBreaker
-from leyline.ports.llm import ModelUnavailableError
+from leyline.ports.llm import ModelUnavailableError, Usage
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +31,19 @@ class OpenAICompatibleChatModel:
         self,
         *,
         base_url: str,
-        api_key: str,
+        api_key: str | Callable[[], str],
         model: str,
         timeout_seconds: float = 30,
         max_retries: int = 2,
         # None leaves the parameter out: reasoning models (the GPT-5 family on
         # Azure OpenAI) reject any temperature other than their default.
         temperature: float | None = 0.1,
+        # Ask for token counts on streamed answers. Turn off for a server that
+        # rejects the ``stream_options`` parameter.
+        stream_usage: bool = True,
         breaker: CircuitBreaker | None = None,
     ) -> None:
+        self._stream_usage = stream_usage
         self._client = OpenAI(
             base_url=base_url,
             # Local servers ignore the key but the SDK requires a value.
@@ -82,7 +86,7 @@ class OpenAICompatibleChatModel:
         logger.warning("chat model call failed: %s", reason)
         return ModelUnavailableError(reason)
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, usage: Usage | None = None) -> str:
         self._guard()
         try:
             response = self._client.chat.completions.create(
@@ -97,9 +101,13 @@ class OpenAICompatibleChatModel:
             self._breaker.record_failure()
             raise ModelUnavailableError("empty_response")
         self._breaker.record_success()
+        if usage is not None and response.usage is not None:
+            usage.add(response.usage.prompt_tokens, response.usage.completion_tokens)
         return text
 
-    def stream(self, system: str, user: str) -> Iterator[str]:
+    def stream(
+        self, system: str, user: str, usage: Usage | None = None
+    ) -> Iterator[str]:
         self._guard()
         produced = False
         try:
@@ -108,9 +116,17 @@ class OpenAICompatibleChatModel:
                 messages=self._messages(system, user),
                 stream=True,
                 temperature=self._temperature,
+                # The last chunk then carries the provider's own token counts.
+                stream_options=(
+                    {"include_usage": True} if self._stream_usage else openai.omit
+                ),
             )
             try:
                 for chunk in response:
+                    if usage is not None and chunk.usage is not None:
+                        usage.add(
+                            chunk.usage.prompt_tokens, chunk.usage.completion_tokens
+                        )
                     if not chunk.choices:
                         continue
                     piece = chunk.choices[0].delta.content

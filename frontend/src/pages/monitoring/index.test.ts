@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eventTone, formatDetails, percent, type SecurityEvent } from "./index";
+import { eventTone, formatCost, formatDetails, formatShare, percent, type SecurityEvent } from "./index";
 
 const event = (over: Partial<SecurityEvent>): SecurityEvent => ({
   timestamp: "2026-11-10T06:00:00+00:00",
@@ -45,6 +45,21 @@ describe("formatDetails", () => {
 
   it("is empty without details", () => {
     expect(formatDetails(event({}))).toBe("");
+  });
+});
+
+describe("usage formatting", () => {
+  it("shows a share as a percentage with one decimal", () => {
+    expect(formatShare(0)).toBe("0.0%");
+    expect(formatShare(0.1234)).toBe("12.3%");
+    expect(formatShare(1)).toBe("100.0%");
+  });
+
+  it("keeps significant digits for tiny costs and cents for larger ones", () => {
+    expect(formatCost(0)).toBe("0");
+    expect(formatCost(0.0009)).toBe("0.00090");
+    expect(formatCost(0.5)).toBe("0.50");
+    expect(formatCost(12.345)).toBe("12.35");
   });
 });
 

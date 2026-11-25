@@ -32,9 +32,14 @@ _sink: EventSink | None = None
 
 
 def set_event_sink(sink: EventSink | None) -> None:
-    """Where events are stored besides stdout (None disables storage)."""
+    """Where events are stored besides stdout (None disables storage). A sink that
+    has a ``close`` method (the queued one) is flushed and stopped when replaced."""
     global _sink
+    previous = _sink
     _sink = sink
+    close = getattr(previous, "close", None)
+    if close is not None and previous is not sink:
+        close()
 
 
 def log_security_event(
