@@ -8,7 +8,7 @@
 targetScope = 'subscription'
 
 @description('Region for everything created here. Your Azure for Students policy allows centralindia, eastasia, uaenorth, koreacentral and malaysiawest.')
-param location string = 'koreacentral'
+param location string = 'eastasia'
 
 @description('The resource group that holds the disposable resources (created if missing).')
 param appResourceGroupName string = 'rg-leyline-app'

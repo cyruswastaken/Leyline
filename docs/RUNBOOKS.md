@@ -11,11 +11,11 @@ All commands run from the repository root in Windows PowerShell after `az login`
 
 | What | Where |
 | --- | --- |
-| Web app | `https://leyline-web.<generated>.koreacentral.azurecontainerapps.io` (print it: `az containerapp show -n leyline-web -g rg-leyline-app --query properties.configuration.ingress.fqdn -o tsv`) |
+| Web app | `https://leyline-web.<generated>.eastasia.azurecontainerapps.io` (print it: `az containerapp show -n leyline-web -g rg-leyline-app --query properties.configuration.ingress.fqdn -o tsv`) |
 | Disposable resources | resource group `rg-leyline-app` (Postgres, Redis, Key Vault, Storage, registry, Container Apps, logs) |
 | Kept resources | `rg-leyline` (Azure OpenAI account `leyline-openai` and its two model deployments), the Entra app `Leyline Helpdesk`, the budget `leyline-monthly` |
 | Containers | `leyline-web`, `leyline-worker`, and the one-off jobs `leyline-task` (migrations) and `leyline-seed` (corpus) |
-| Region | Korea Central (the subscription's policy also allows Central India, East Asia, UAE North, Malaysia West) |
+| Region | East Asia (the OpenAI account stays in Korea Central; the policy also allows Central India, UAE North, Malaysia West) |
 | Health | `/healthz` (is the process up) and `/readyz` (is everything it needs reachable) |
 
 | Script | Purpose |
@@ -49,6 +49,14 @@ apps so they pick it up, which is also a free password rotation.
 **What a deploy does not catch.** `-WhatIf` and Azure's own validation do not run the real calls, so they
 passed templates that then failed. If a deploy fails, read the error, fix it, and run it again: it only
 fills in what is missing. See section 11 for the failures seen so far.
+
+**Azure refuses the database (`SkuNotAvailable`).** A region can stop accepting new Postgres servers of a
+size it still lists, and neither `-WhatIf` nor the size list shows it. **Before tearing down an environment you
+need back,** create a temporary server of the same size in its own resource group and delete it. If the region
+refuses, either wait, or move: permanently delete the log workspace (`az monitor log-analytics workspace delete
+--force true`; a soft-deleted one keeps the name for its old region), tear down, delete the `leyline-*` entries
+from `az deployment sub list` (each is pinned to a region), change the region in `deploy.ps1`, `main.bicep` and
+`.github/workflows/deploy.yml`, and deploy.
 
 **Tear down** (stops the spending, about 40 INR a day while it runs):
 

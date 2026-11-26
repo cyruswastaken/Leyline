@@ -109,6 +109,9 @@ resource logAlerts 'Microsoft.Insights/scheduledQueryRules@2022-06-15' = [
       windowSize: rule.window
       scopes: [logs.id]
       autoMitigate: true
+      // The log tables appear only once the apps have written something, so on a fresh
+      // deployment Azure would reject every query here as naming an unknown table.
+      skipQueryValidation: true
       criteria: {
         allOf: [
           {

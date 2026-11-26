@@ -49,11 +49,13 @@ def _token_provider(settings: Settings, resource: str) -> Callable[[], str]:
     return lambda: identity.token(resource).token
 
 
-def build_database(settings: Settings) -> Database | None:
+def build_database(settings: Settings, *, pool_size: int = 5) -> Database | None:
+    """Every entry point builds its database here, so they all sign in the same way."""
     if settings.database_url is None:
         return None
     return Database(
         settings.database_url.get_secret_value(),
+        pool_size=pool_size,
         password_provider=(
             _token_provider(settings, POSTGRES)
             if settings.database_entra_auth

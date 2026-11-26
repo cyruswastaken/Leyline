@@ -145,6 +145,11 @@ def test_a_missing_action_group_does_not_stop_a_deployment():
     assert body.index("$ErrorActionPreference = 'Continue'") < body.index("& az ")
 
 
+def test_the_log_alerts_can_be_created_before_any_log_exists():
+    """A fresh workspace has no console-log table until the apps write to it."""
+    assert "skipQueryValidation: true" in MONITORING
+
+
 @pytest.mark.parametrize("module", ["main", "monitoring"])
 def test_alerts_are_part_of_the_template(module):
     path = (

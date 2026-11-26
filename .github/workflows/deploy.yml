@@ -82,7 +82,7 @@ jobs:
       contents: read
     env:
       RESOURCE_GROUP: rg-leyline-app
-      LOCATION: koreacentral
+      LOCATION: eastasia
       INPUT_ACTION: ${{ inputs.action }}
       INPUT_SEED: ${{ inputs.seed }}
       INPUT_ALLOW_DESTRUCTIVE_MIGRATION: ${{ inputs.allow_destructive_migration }}

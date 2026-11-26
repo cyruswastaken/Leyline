@@ -7,7 +7,7 @@ import sys
 
 from leyline.config import get_settings
 from leyline.db import migrate
-from leyline.db.database import Database
+from leyline.wiring import build_database
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,11 +17,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = get_settings()
-    if settings.database_url is None:
+    database = build_database(settings, pool_size=1)
+    if database is None:
         print("DATABASE_URL is not configured", file=sys.stderr)
         return 2
 
-    database = Database(settings.database_url.get_secret_value(), pool_size=1)
     try:
         if args.command == "upgrade":
             migrate.upgrade(database.engine)

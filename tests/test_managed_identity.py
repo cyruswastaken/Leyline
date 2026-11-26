@@ -1,10 +1,13 @@
 """Signing in to Azure services with the container's managed identity, not keys."""
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+from azure.storage.blob import BlobServiceClient, ContainerClient
 from pydantic import ValidationError
 from sqlalchemy import text
 
@@ -213,6 +216,43 @@ def test_the_database_asks_for_a_new_token_for_every_connection(db):
         database.dispose()
 
 
+def test_the_migration_command_signs_in_with_the_token(db, monkeypatch, capsys):
+    """The migration job is its own entry point; it failed on Azure by connecting without one."""
+    from leyline.db import __main__ as db_command
+    from tests.support import make_settings
+
+    asked = []
+
+    def fake_provider(settings, resource):
+        def token():
+            asked.append(resource)
+            return "leyline-dev-only"  # the dev password stands in for a token
+
+        return token
+
+    # set(password=None) means "unchanged"; _replace really removes it.
+    url = db.engine.url._replace(password=None).render_as_string(hide_password=False)
+    settings = make_settings(database_url=url, database_entra_auth=True)
+    monkeypatch.setattr(db_command, "get_settings", lambda: settings)
+    monkeypatch.setattr(wiring, "_token_provider", fake_provider)
+
+    assert db_command.main(["current"]) == 0
+    assert asked and set(asked) == {POSTGRES}
+
+
+def test_every_entry_point_builds_the_database_the_same_way():
+    """A Database built anywhere else would silently skip the identity sign-in."""
+    from pathlib import Path
+
+    package = Path(wiring.__file__).parent
+    direct = [
+        path.relative_to(package).as_posix()
+        for path in package.rglob("*.py")
+        if re.search(r"(?<![\w.])Database\(", path.read_text("utf-8"))
+    ]
+    assert direct == ["wiring.py"]
+
+
 def test_a_database_that_cannot_get_a_token_is_not_ready():
     def broken():
         raise IdentityError("not_in_azure")
@@ -264,6 +304,35 @@ def test_blob_storage_signs_in_with_the_identity_when_given_an_account_address(
         credential=identity(endpoint()),
     )
     assert store is not None
+
+
+@pytest.mark.parametrize(
+    ("raised", "reachable"),
+    [(None, True), (ResourceNotFoundError, True), (HttpResponseError, False)],
+)
+def test_the_storage_probe_asks_only_for_the_container(monkeypatch, raised, reachable):
+    """The data role may not read the account's service properties: asking for them
+    kept a healthy deployment "not ready" (403)."""
+    asked = []
+
+    def properties(self, **_):
+        asked.append(self.container_name)
+        if raised:
+            raise raised("answer from storage")
+
+    def forbidden(self, **_):
+        raise AssertionError("service properties need a broader role")
+
+    monkeypatch.setattr(ContainerClient, "get_container_properties", properties)
+    monkeypatch.setattr(BlobServiceClient, "get_service_properties", forbidden)
+    store = AzureBlobStore(
+        None,
+        "documents",
+        account_url="https://a.blob.core.windows.net",
+        credential=ManagedIdentity(endpoint="http://127.0.0.1:1", header="h"),
+    )
+    assert store.ping() is reachable
+    assert asked == ["documents"]
 
 
 def test_blob_storage_needs_a_connection_string_or_an_address_and_credential():

@@ -310,9 +310,16 @@ that wait for your approval; they are Phase 12's verification).
   tests over real Keycloak sign-ins, permissions, upload to deletion, streaming to ticket resolution, and an
   accessibility audit of every page. Passed locally in Microsoft Edge and on GitHub (Chromium, merged in #28 on 2026-11-26); it is
   a required check in the `main` ruleset.
-- **Open:** the full verification (teardown, `deploy.ps1 -Seed -ManagedIdentity`, `ci-identity.ps1`, a CI deploy,
-  a person's Entra sign-in and chat, evals and load test, alerts seen firing), the latency gate, and the final
-  production claim.
+- **Rebuilt with managed identity (2026-11-26).** Teardown, then a fresh deploy. Korea Central refused a new
+  `Standard_B1ms` Postgres server (`SkuNotAvailable`, also in each zone), so everything but the OpenAI account
+  moved to **East Asia**, which a temporary test server showed would accept it. The fresh deploy found four defects
+  that tests and previews had not: the alert-group lookup stopped `deploy.ps1`, the log alerts could not be created
+  before any log existed, the migration command connected without the identity token, and the storage probe asked
+  for more than the data role allows. All fixed. Verified: `/readyz` ready, the smoke test 11 of 11, 49 documents
+  indexed, an embedding and a chat call through the identity, password and key access off for Postgres, Redis and
+  storage, only the Entra client secret in Key Vault, and all seven alert queries running.
+- **Open:** `ci-identity.ps1` and `alerts.ps1` (the user's), a CI deploy, a person's Entra sign-in and chat, evals
+  and load test, an alert seen firing, the restore drill, the latency gate, and the final production claim.
 
 ## Production-grade gates
 

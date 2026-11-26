@@ -20,7 +20,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$Location = 'koreacentral',
+    [string]$Location = 'eastasia',
     [string]$AppResourceGroup = 'rg-leyline-app',
     [string]$OidcClientId = '',
     [string]$OidcTenantId = '',

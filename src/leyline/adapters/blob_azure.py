@@ -91,8 +91,14 @@ class AzureBlobStore:
             self._container.delete_blob(key, timeout=_TIMEOUT_SECONDS)
 
     def ping(self) -> bool:
+        """Can we reach our container? Asks only what the least-privilege data role
+        allows: the account's service properties are refused to a managed identity."""
         try:
-            self._probe.get_service_properties(timeout=_PROBE_TIMEOUT_SECONDS)
+            self._probe.get_container_client(
+                self._container.container_name
+            ).get_container_properties(timeout=_PROBE_TIMEOUT_SECONDS)
+        except ResourceNotFoundError:
+            return True  # storage answered; the first write creates the container
         except Exception:
             return False
         return True
