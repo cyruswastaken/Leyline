@@ -110,23 +110,44 @@ def test_the_app_environment_sets_only_settings_the_code_understands():
     assert names <= known, f"unknown settings: {sorted(names - known)}"
 
 
-def test_every_container_gets_the_settings_production_validation_requires(monkeypatch):
+def _env_blocks(apps: str) -> tuple[str, str, str]:
+    key = apps.split("var keyEnv = [", 1)[1].split("var identityEnv = [", 1)[0]
+    identity = apps.split("var identityEnv = [", 1)[1].split("var commonEnv", 1)[0]
+    common = apps.split("var commonEnv = concat(", 1)[1].split("resource web", 1)[0]
+    return key, identity, common
+
+
+@pytest.mark.parametrize("mode", ["keys", "identity"])
+def test_every_container_gets_the_settings_production_validation_requires(
+    monkeypatch, mode
+):
     """The web app, the worker and both jobs all load settings in production mode, so
-    each must carry the required ones (a worker without SESSION_COOKIE_SECURE crash-loops)."""
+    each must carry the required ones (a worker without SESSION_COOKIE_SECURE crash-loops).
+    Checked for both ways of signing in to the data services."""
     apps = read(MODULES / "apps.bicep")
-    common = apps.split("var commonEnv = [", 1)[1].split("resource web", 1)[0]
+    key, identity, common = _env_blocks(apps)
+    block = (key if mode == "keys" else identity) + common
     declared = dict(
-        re.findall(r"name: '([A-Z0-9_]+)', (?:value: '([^']*)'|secretRef)", common)
+        re.findall(r"name: '([A-Z0-9_]+)', (?:value: '([^']*)'|secretRef)", block)
     )
-    names = set(re.findall(r"name: '([A-Z0-9_]+)'", common))
-    # no container gets a private environment: all three use commonEnv and nothing else
+    names = set(re.findall(r"name: '([A-Z0-9_]+)'", block))
+    # no container gets a private environment: all of them use commonEnv and nothing else
     assert apps.count("env: commonEnv") == 4  # web, worker, task job, seed job
     assert "webEnv" not in apps
     # build a production configuration from exactly what the template injects
     placeholders = {
-        "DATABASE_URL": "postgresql+pg8000://u:p@h:5432/leyline?ssl_context=true",
+        "DATABASE_URL": (
+            "postgresql+pg8000://u:p@h:5432/leyline?ssl_context=true"
+            if mode == "keys"
+            else "postgresql+pg8000://id-leyline@h:5432/leyline?ssl_context=true"
+        ),
         "BLOB_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=a;AccountKey=k",
-        "REDIS_URL": "rediss://:k@h:10000/0",
+        "BLOB_ACCOUNT_URL": "https://a.blob.core.windows.net/",
+        "REDIS_URL": "rediss://:k@h:10000/0"
+        if mode == "keys"
+        else "rediss://h:10000/0",
+        "REDIS_ENTRA_USERNAME": "00000000-0000-0000-0000-000000000000",
+        "AZURE_CLIENT_ID": "11111111-1111-1111-1111-111111111111",
         "LLM_BASE_URL": "https://example.openai.azure.com/openai/v1/",
         "LLM_MODEL": "gpt-5.4-mini",
         "LLM_API_KEY": "k",
@@ -139,12 +160,76 @@ def test_every_container_gets_the_settings_production_validation_requires(monkey
         "OIDC_CLIENT_SECRET": "s",
     }
     for name in names:
-        monkeypatch.setenv(name, declared.get(name) or placeholders[name])
+        value = declared.get(name)
+        monkeypatch.setenv(
+            name, placeholders[name] if not value or "${" in value else value
+        )
     settings = Settings(_env_file=None)  # type: ignore[call-arg]  # raises if anything required is missing
     assert settings.session_cookie_secure is True
     assert settings.llm_send_temperature is False
     assert settings.embedding_send_dimensions is True
     assert settings.embeddings_configured
+    assert settings.event_queue_size == 1000
+    assert settings.uses_managed_identity is (mode == "identity")
+
+
+def test_in_identity_mode_no_key_secret_exists_or_is_referenced():
+    apps = read(MODULES / "apps.bicep")
+    key, identity, _ = _env_blocks(apps)
+    assert "secretRef" in key and "secretRef" not in identity
+    secrets = read(MODULES / "secrets.bicep")
+    for name in (
+        "database-url",
+        "redis-url",
+        "blob-connection-string",
+        "openai-api-key",
+    ):
+        resource = secrets.split(f"name: '{name}'", 1)[0].rsplit("resource ", 1)[1]
+        assert "if (!useManagedIdentity)" in resource, name
+    assert (
+        "if (includeOidcSecret)" in secrets
+    )  # the Entra client secret is the one left
+    # the key list handed to the containers is empty in identity mode
+    assert "useManagedIdentity ? [] : keySecretNames" in apps
+
+
+def test_identity_mode_switches_the_data_services_to_the_identity_and_the_keys_off():
+    data = read(MODULES / "data.bicep")
+    assert "activeDirectoryAuth: useManagedIdentity ? 'Enabled' : 'Disabled'" in data
+    assert "passwordAuth: useManagedIdentity ? 'Disabled' : 'Enabled'" in data
+    assert (
+        "administratorLoginPassword: useManagedIdentity ? null : postgresAdminPassword"
+        in data
+    )
+    assert (
+        "accessKeysAuthentication: useManagedIdentity ? 'Disabled' : 'Enabled'" in data
+    )
+    assert "administrators@" in data and "accessPolicyAssignments@" in data
+    platform = read(MODULES / "platform.bicep")
+    assert "allowSharedKeyAccess: !useManagedIdentity" in platform
+    assert (
+        "ba92f5b4-2d11-453d-a403-e96b0029c9fe" in platform
+    )  # Storage Blob Data Contributor
+    access = read(MODULES / "openai-access.bicep")
+    assert (
+        "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd" in access
+    )  # Cognitive Services OpenAI User
+
+
+def test_the_identity_option_is_off_by_default_and_deploy_can_turn_it_on():
+    for name in ("main", "platform", "data", "apps", "secrets"):
+        text = read((INFRA if name == "main" else MODULES) / f"{name}.bicep")
+        assert "param useManagedIdentity bool = false" in text, name
+    assert "[switch]$ManagedIdentity" in read(INFRA / "deploy.ps1")
+    assert "useManagedIdentity    = $ManagedIdentity.IsPresent" in read(
+        INFRA / "deploy.ps1"
+    )
+
+
+def test_the_openai_key_module_reads_no_key_in_identity_mode():
+    key = read(MODULES / "openai-key.bicep")
+    assert "skip ? '' : account.listKeys().key1" in key
+    assert "skip: useManagedIdentity" in read(INFRA / "main.bicep")
 
 
 def find_bicep() -> str | None:

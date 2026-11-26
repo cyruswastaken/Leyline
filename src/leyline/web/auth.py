@@ -25,9 +25,16 @@ from leyline.auth.access import (
     require_principal,
 )
 from leyline.auth.csrf import get_csrf_token, new_csrf_token
+from leyline.auth.graph import GraphError, fetch_group_ids
 from leyline.auth.oidc import CLIENT_NAME, EXTENSION_KEY
-from leyline.auth.principal import InvalidClaimsError, principal_from_claims
+from leyline.auth.principal import (
+    InvalidClaimsError,
+    Principal,
+    principal_from_claims,
+    with_resolved_groups,
+)
 from leyline.auth.sessions import rotate_session_id
+from leyline.config import Settings
 from leyline.extensions import app_settings
 from leyline.services.logger import log_security_event
 
@@ -40,6 +47,42 @@ _ID_TOKEN_KEY = "id_token"  # noqa: S105 (session key name, not a secret)
 def _client() -> Any:
     oauth = current_app.extensions.get(EXTENSION_KEY)
     return oauth.create_client(CLIENT_NAME) if oauth is not None else None
+
+
+def _resolve_overage(
+    principal: Principal, token: Mapping[str, Any], settings: Settings
+) -> tuple[Principal, str | None]:
+    """Ask Microsoft Graph for the groups an "overage" token left out.
+
+    Returns the principal and, when a lookup was needed, ``"resolved"`` or why it
+    failed. A failure keeps the fail-closed principal (no groups beyond the public
+    ones); it never denies sign-in and never grants anything. The access token is
+    used for this one call and is not kept."""
+    if not (principal.groups_incomplete and settings.oidc_resolve_group_overage):
+        return principal, None
+    access_token = token.get("access_token")
+    try:
+        ids = fetch_group_ids(
+            access_token if isinstance(access_token, str) else "",
+            base_url=settings.graph_base_url,
+            timeout_seconds=settings.graph_timeout_seconds,
+        )
+    except GraphError as exc:
+        return principal, f"graph_{exc.reason}"
+    except Exception as exc:  # never let the lookup itself break sign-in
+        current_app.logger.warning("group lookup failed: %s", type(exc).__name__)
+        return principal, "graph_unexpected_error"
+    resolved = with_resolved_groups(principal, ids, settings.oidc_group_names)
+    return resolved, "resolved"
+
+
+def _login_details(principal: Principal, overage: str | None) -> dict[str, Any] | None:
+    details: dict[str, Any] = {}
+    if principal.groups_incomplete:
+        details["groups_incomplete"] = True
+    if overage:
+        details["group_overage"] = overage
+    return details or None
 
 
 def _sign_in_failed() -> Response:
@@ -116,6 +159,7 @@ def callback() -> ResponseReturnValue:
             roles_claim=settings.oidc_roles_claim,
             group_names=settings.oidc_group_names,
         )
+        principal, overage_reason = _resolve_overage(principal, token, settings)
     except Exception as exc:  # fail closed on *any* sign-in problem
         current_app.logger.warning("sign-in failed: %s", type(exc).__name__)
         log_security_event(
@@ -144,7 +188,7 @@ def callback() -> ResponseReturnValue:
         user_id=principal.user_id,
         status_code=200,
         reason="login_succeeded",
-        details={"groups_incomplete": True} if principal.groups_incomplete else None,
+        details=_login_details(principal, overage_reason),
     )
 
     destination = (

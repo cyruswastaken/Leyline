@@ -28,6 +28,7 @@ _requests: Counter
 _outcomes: Counter
 _feedback: Counter
 _tokens: Counter
+_cost: Counter
 _stage_ms: Histogram
 _first_token_ms: Histogram
 _turn_ms: Histogram
@@ -40,7 +41,7 @@ def use_providers(
     meter_provider: MeterProvider | None = None,
 ) -> None:
     """Bind the instruments to these providers (no-ops when omitted)."""
-    global _tracer, _meter, _requests, _outcomes, _feedback, _tokens
+    global _tracer, _meter, _requests, _outcomes, _feedback, _tokens, _cost
     global _stage_ms, _first_token_ms, _turn_ms, _http_ms
     _tracer = (tracer_provider or trace.NoOpTracerProvider()).get_tracer(SERVICE)
     _meter = (meter_provider or metrics.NoOpMeterProvider()).get_meter(SERVICE)
@@ -56,8 +57,14 @@ def use_providers(
         "leyline.feedback", description="Answer ratings (rating=1 or -1)"
     )
     _tokens = _meter.create_counter(
-        "leyline.llm.tokens.estimated",
-        description="Estimated tokens sent to and received from the chat model",
+        "leyline.llm.tokens",
+        description="Tokens sent to and received from the chat model; source is "
+        "'provider' (counted by the model service) or 'estimate'",
+    )
+    _cost = _meter.create_counter(
+        "leyline.llm.cost",
+        unit="USD",
+        description="Chat model cost of answered turns, from the configured prices",
     )
     _stage_ms = _meter.create_histogram(
         "leyline.chat.stage.duration", unit="ms", description="Time in a pipeline stage"
@@ -176,8 +183,13 @@ def feedback(rating: int) -> None:
     _feedback.add(1, {"rating": rating})
 
 
-def tokens(direction: str, estimate: int) -> None:
-    _tokens.add(max(0, estimate), {"direction": direction})
+def tokens(direction: str, count: int, source: str = "estimate") -> None:
+    _tokens.add(max(0, count), {"direction": direction, "source": source})
+
+
+def cost(usd: float) -> None:
+    if usd > 0:
+        _cost.add(usd)
 
 
 def http_request(route: str, method: str, status: int, started: float) -> None:

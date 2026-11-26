@@ -22,6 +22,8 @@ python scripts/e2e_login.py      # full-stack check (stack up + corpus seeded); 
 E2E_CHAT=1 python scripts/e2e_login.py   # also drives a real chat model (Ollama qwen2.5:3b)
 python -m leyline.evals.answers [--verbose]   # answer quality with the real chat model (manual gate)
 cd frontend && npm ci && npm run check   # UI: lint, typecheck, unit tests, build, bundle budget
+docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml up -d --build --wait   # browser-test stack (stop the dev stack first; then seed with `run --rm app python -m leyline.seed`)
+cd frontend && E2E_BROWSER_CHANNEL=msedge npm run e2e   # Playwright journeys + axe audit (PowerShell: $env:E2E_BROWSER_CHANNEL="msedge"); `down -v` on the e2e project afterwards
 cd frontend && npm run build && cd .. && docker compose -f compose.yaml -f compose.frontend.yaml up -d --build app   # UI loop against the real stack
 ./infra/deploy.ps1 -WhatIf       # Azure: preview the deployment (creates nothing); then ./infra/deploy.ps1, ./infra/teardown.ps1
 python -m leyline.evals [--index fts|hybrid] [--embeddings evals/embeddings.json] [--check evals/thresholds.json] [--sweep]
@@ -101,6 +103,7 @@ CI runs the same checks (`.github/workflows/ci.yml`); keep them green.
 - Answer quality (`leyline.evals.answers`) needs a chat model, so it is a manual gate, not CI.
   A 3B local model follows citation and refusal instructions imperfectly; expect misses.
 - Security events are stored synchronously and fail open (an event-store outage drops rows, not requests); append-only is a trigger, so production must also give the app's database role INSERT/SELECT only.
-- No browser-driven end-to-end tests (Playwright) and the axe accessibility audit is manual, not in CI.
+- Browser tests (`frontend/e2e`, CI job `Browser tests`) run in Chromium only, with a fake chat model and
+  keyword search; the Entra sign-in on Azure is checked by a person.
 - `requirements.txt` is a pinned lock of runtime deps; regenerate it from a
   clean venv when changing `pyproject.toml` dependencies.

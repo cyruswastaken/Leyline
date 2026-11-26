@@ -1,0 +1,52 @@
+# Overrides for the browser tests (frontend/e2e). Usage:
+#
+#   docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml up -d --build --wait
+#   docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml run --rm app python -m leyline.seed
+#   cd frontend && npm run e2e
+#   docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml down -v
+#
+# The separate project name keeps the test data apart from your development data
+# (the ports are the same, so stop the development stack first).
+#
+# The chat model is the fake from loadtest/, and no embedding model is set (keyword
+# search), so the tests behave the same on any machine and ignore what .env says.
+# Rate limits are raised: the tests check behaviour, not the limiter.
+services:
+  app:
+    depends_on:
+      fake-llm:
+        condition: service_healthy
+    environment:
+      LLM_BASE_URL: http://fake-llm:9099/v1
+      LLM_MODEL: fake
+      LLM_API_KEY: ""
+      EMBEDDING_BASE_URL: ""
+      EMBEDDING_MODEL: ""
+      RERANK_BASE_URL: ""
+      RATE_LIMIT_REQUESTS: "100000"
+      RATE_LIMIT_IP_REQUESTS: "100000"
+      TICKET_RATE_LIMIT: "100000"
+
+  worker:
+    environment:
+      EMBEDDING_BASE_URL: ""
+      EMBEDDING_MODEL: ""
+
+  fake-llm:
+    build: .
+    command: ["python", "/srv/fake_llm.py"]
+    environment:
+      # Slow enough that an answer can be stopped halfway through.
+      FAKE_LLM_DELAY_MS: "120"
+    volumes:
+      - ./loadtest/fake_llm.py:/srv/fake_llm.py:ro
+    healthcheck:
+      # The image's own check asks the web app; this one only needs the port open.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9099), 2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true

@@ -16,6 +16,17 @@
     <ul id="bars" class="m-0 list-none p-0"></ul>
 </section>
 
+<section class="card mb-8" aria-labelledby="usage-title">
+    <h2 id="usage-title" class="card-title"><span class="marker">Model usage, last 7 days</span></h2>
+    <p id="usage-note" class="mb-3 text-sm text-muted"></p>
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead><tr><th>Day</th><th>Answers</th><th>Prompt tokens</th><th>Answer tokens</th><th>Cost (USD)</th></tr></thead>
+            <tbody id="usage-body"></tbody>
+        </table>
+    </div>
+</section>
+
 <section class="card" aria-labelledby="events-title">
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 id="events-title" class="card-title mb-0"><span class="marker">Recent events</span></h2>

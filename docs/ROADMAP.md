@@ -238,7 +238,7 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 - **Pipeline fixes found by the first real runs:** the Security workflow now passes (gitleaks allowlist of two public role ids, Trivy pinned to a commit, a documented audit exception for one unpatched dev-tooling advisory, picomatch); the container smoke test's events helper retries on rate limits. 15 Dependabot PRs were triaged: 11 merged, 1 closed (TypeScript 7 fails the frontend checks), 3 held (SQLAlchemy 2.1, Node 26 and Python 3.15 images) until tested on the deployed runtime.
 - **Demo users and access (2026-11-19):** the seven Entra demo users were recreated and the role pages and group-restricted answers were checked by the user on the live site.
 - **Answer quality on Azure (2026-11-19, `docs/EVALUATION.md`):** gpt-5.4-mini answers 0.963, cites a source and an expected document 1.000, refuses unanswerable 1.000, restricted pass 1.000, ACL leaks 0, figures supported 0.981 (the metric now understands number words). Measured against a local database loaded with the Azure embedding model, not the deployed one.
-- **Full suite:** 1,294 tests pass, coverage 95% overall (`services/authorization.py` at 100%).
+- **Full suite:** 1,407 tests pass (2026-11-24; 1,294 at the 2026-11-19 measurement), coverage 95% overall (`services/authorization.py` at 100%).
 - **Branch ruleset on `main` (2026-11-19):** before this, `main` had no protection and no rulesets, so the scans were not required checks and `main` could be force-pushed or deleted. The ruleset "main: no force-push, checks must pass" (id 27617185) blocks deletion and force-push and requires the ten CI and Security jobs before a pull request can merge. Repository admins can bypass it (the single maintainer commits straight to `main`), so direct pushes are not checked by it; the Deploy workflow's own gate (CI and Security must have passed on the exact commit) is the backstop. The required names were compared with the real job names. **Not yet seen blocking or allowing a live PR.**
 - **Open, by design or not yet done:** managed-identity access to Postgres, Redis, Blob and Azure OpenAI (keys still live in Key Vault; ADR 0004); first-token latency with the real model (measured, target missed: the one gate still open below); Playwright and axe in CI; three held Dependabot PRs.
 - **Original plan (kept for reference; the decisions above replace it where they differ):**
@@ -251,6 +251,69 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 
 **Done when:** a fresh deploy from an empty resource group passes the full verification below.
 
+### Phase 9: Latency and loose ends (2026-11-24)
+
+**Status: first token improved, gate still open.** A deterministic check now skips the follow-up rewrite when a
+question stands alone ([0010](adr/0010-skip-the-follow-up-rewrite-when-a-question-stands-alone.md)); a 30-conversation
+follow-up eval keeps recall@5 at 0.964. Real-model load test, 8 users: first token p95 3.8 s to 3.0 s. Timed from
+inside Azure (stages only) a new question reaches its first word in about 1.5 s at p95; the end-to-end figure on the
+deployed site is not measured, so the gate stays open. The a051 figure check was fixed (figures supported 1.000).
+Not done yet: the live-PR check of the ruleset, the three held Dependabot PRs, the Azure follow-up recording.
+
+### Phase 10: Retrieval and answer quality upgrades (2026-11-24)
+
+**Status: built and measured; two ideas not adopted.**
+- **Golden set 78 to 126** questions, written before measuring, including 12 near-topic unanswerable ones scored on
+  their own. This exposed the weak spot: near-topic refusal 0.083 (local) and 0.417 (Azure). Floors were raised
+  where the numbers allowed and a near-topic floor pins the baseline; none was lowered.
+- **Not adopted, measured:** the document title in the embedded text ([0012](adr/0012-keep-the-document-title-out-of-the-embedding-text.md))
+  and a `bge-reranker-base` cross-encoder ([0011](adr/0011-no-cross-encoder-reranker-for-now.md): lower recall, no
+  usable floor). The port, adapter and sweep stay, off.
+- **Real token and cost metering** per answered turn, on the turn's event, summed by day for the auditor
+  ([0013](adr/0013-usage-and-cost-live-on-the-turn-event.md)); deviation from the plan: not on `messages`, to keep
+  conversations owner-scoped.
+- **Answer quality in CI:** recorded gpt-5.4-mini answers replayed through today's pipeline with floors
+  (`tests/test_answers_replay.py`), plus a deterministic citation-grounding check.
+
+### Phase 11: Production operations on Azure (2026-11-24)
+
+**Status: built and tested locally; nothing here has been run on Azure yet** (it needs a rebuild and tenant changes
+that wait for your approval; they are Phase 12's verification).
+- **Security events off the request path:** a bounded background queue (`EVENT_QUEUE_SIZE`, set in Azure); a full
+  queue drops and counts events and logs `EVENT_STORE_FAILED`. `deploy/sql/app_role.sql` limits the app's database
+  role to INSERT and SELECT on the event tables; a test proves UPDATE, DELETE and TRUNCATE are denied (triggers
+  cannot stop TRUNCATE). Applying it for real needs a separate migration identity, which is not built.
+- **Entra group overage through Graph** (`OIDC_RESOLVE_GROUP_OVERAGE`): mapped groups only, any failure keeps the
+  fail-closed result, the access token is never kept ([0016](adr/0016-resolve-entra-group-overage-through-graph-and-fail-closed.md)).
+  Off until a tenant administrator consents to `GroupMember.Read.All`; not made.
+- **Managed identity, no data-service keys** (`deploy.ps1 -ManagedIdentity`, template switch `useManagedIdentity`):
+  Postgres, Redis, Blob storage and the models accept the container identity; the Entra client secret is the only
+  secret left in Key Vault ([0014](adr/0014-the-container-identity-signs-in-to-the-data-services.md)). Compiles and passes
+  production validation in both modes; needs a rebuild to adopt; one identity is the database administrator
+  (recorded trade-off). The OpenAI account's own keys still exist on the account.
+- **Alerts and objectives:** log-based alert rules (site down, 5xx, slow first token, model errors and throttling,
+  dropped events, silent worker) and database CPU and storage alerts, with `infra/alerts.ps1` for the email action
+  group, [SLO.md](SLO.md) and runbook sections 16 and 17 ([0015](adr/0015-alerts-from-the-logs-already-written.md)). No
+  Application Insights or exporter dependency; none has been seen firing in Azure.
+- **Restore drill:** `infra/restore-drill.ps1` restores to a temporary server, checks the data read-only and deletes it
+  (costs a second small server for about 15 to 30 minutes). Not run: it creates a billable resource and needs your OK.
+- **Safer deploys:** the Deploy workflow refuses a destructive migration unless a box is ticked
+  (`scripts/check_migrations.py`), smoke-tests the signed-out site after deploying (`scripts/smoke_test.py`) and rolls
+  both apps back to the previous image if the release fails; it also passes the sign-in mode and the action group
+  from the running environment so an update never switches them. `ci-identity.ps1` gained two assignable roles; it must
+  be re-run (by you) before a managed-identity deploy.
+
+### Phase 12: Browser tests and final verification (2026-11-25)
+
+**Status: browser tests built and passing locally; the rest is open.**
+- **Playwright and axe** (`frontend/e2e`, `compose.e2e.yaml`, CI job "Browser tests (Playwright + axe)"): 17
+  tests over real Keycloak sign-ins, permissions, upload to deletion, streaming to ticket resolution, and an
+  accessibility audit of every page. Passed locally in Microsoft Edge; the CI job has not yet run on GitHub and
+  is not yet a required check in the ruleset.
+- **Open:** the full verification (teardown, `deploy.ps1 -Seed -ManagedIdentity`, `ci-identity.ps1`, a CI deploy,
+  a person's Entra sign-in and chat, evals and load test, alerts seen firing), the latency gate, and the final
+  production claim.
+
 ## Production-grade gates
 
 Scorecard, updated 2026-11-21. The "educational lab" wording stays until the one open gate (latency under load with a real model) is met.
@@ -261,7 +324,7 @@ Scorecard, updated 2026-11-21. The "educational lab" wording stays until the one
 | Every route has allow and deny tests; coverage at least 85%, 100% of the authorization module | **Met** | `tests/test_access_matrix.py`; 1,294 tests, 95% total, `services/authorization.py` 100% |
 | No high or critical findings from scanners | **Met, one documented exception** | Security workflow green (pip-audit, npm audit, CodeQL, gitleaks, Trivy, ZAP); `frontend/scripts/audit-gate.mjs` allows one unpatched dev-tooling advisory (picomatch), nothing shipped to browsers |
 | No secrets in code, config or images | **Met** | gitleaks over the full history; secrets only in Key Vault (`tests/test_infra.py`). Keys for Postgres, Redis, Blob and OpenAI still exist as Key Vault secrets (ADR 0004) |
-| Agreed latency targets for first token and full response, met under load | **Open** | Measured with the real model (2026-11-24, `docs/LOAD_TEST.md`, 4 and 8 users, 0 failures): whole turn p95 4.0 s (target 6 s, met), other endpoints met, but **first token p95 3.8 s against the 2.5 s target (missed)**. A follow-up waits for two model calls (rewrite, then answer). The target was set with a fake model and is deliberately not changed to fit; the next step is a decision (speed up follow-ups, or agree per-kind targets). Measured on a laptop against Azure OpenAI, not on the deployed containers |
+| Agreed latency targets for first token and full response, met under load | **Open** | Measured with the real model (2026-11-24, `docs/LOAD_TEST.md`, 4 and 8 users, 0 failures): whole turn p95 4.0 s (target 6 s, met), other endpoints met, but **first token p95 3.8 s against the 2.5 s target (missed)**. After skipping the rewrite for follow-ups that stand alone (Phase 9, 2026-11-24, follow-up eval keeps recall@5 0.964): first token p50 2.2 s, **p95 3.0 s, still missed**; whole turn p95 3.2 s. What is left is the embedding call, the model's first token and the holdback. The target was set with a fake model and is deliberately not changed to fit. Timed from inside Azure (stages only, 24 new questions): search + first 96 characters p50 1.07 s, p95 1.49 s, so a new question should be well under 2.5 s there; a follow-up that needs a rewrite is near it. The end-to-end figure on the deployed site is not measured (no Entra sign-in in Locust); Phase 11 exports the first-token metric and alerts on it, which closes the gate with evidence. Load test measured on a laptop against Azure OpenAI |
 | Deployment is repeatable from code, with tested rollback | **Met for image-only changes** | Repeatable: rebuilt from an empty resource group (2026-11-11) and updated by the approved CI workflow. Rollback tested on the live environment (2026-11-21): web and worker back to an older image in 39 s and forward in 34 s, `/readyz` 200 on every probe (runbook section 15). Limits: migrations only go forward, so an image rollback is safe only while the schema is compatible; data written by a bad version is not undone |
 | All security-relevant actions appear in the audit log | **Met** | `audit_events` (append-only trigger), covered by the red-team and access-matrix tests |
 
@@ -270,4 +333,4 @@ Scorecard, updated 2026-11-21. The "educational lab" wording stays until the one
 - **Each PR:** lint, types, unit and integration tests against real Postgres and Redis containers, fake-LLM pipeline tests, security scans.
 - **End to end (Playwright, in compose):** log in as each demo user; confirm a Security-only document is cited for Security users and invisible to staff; revoke a group and confirm access ends immediately; upload, ask, cite, delete, ask again; stream, give feedback, escalate, resolve.
 - **Evals:** retrieval, groundedness and red-team suites on every relevant change.
-- **Azure:** the same Playwright and eval suites against staging, via real Entra login.
+- **Azure:** the eval suites against the deployed environment, and a person signing in through Entra (there is no staging copy, and the browser tests sign in through Keycloak only).

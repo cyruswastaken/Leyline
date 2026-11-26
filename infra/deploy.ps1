@@ -30,7 +30,12 @@ param(
     [switch]$InfraOnly,
     # After the migrations, load the sample corpus (the worker then indexes it).
     [switch]$Seed,
-    [switch]$ScaleToZero
+    [switch]$ScaleToZero,
+    # Sign in to Postgres, Redis, Blob storage and the models with the container identity,
+    # so no database password, Redis key, storage key or model key is created or stored
+    # (decision 0014). Use it for a fresh deployment or a rebuild: the data services change
+    # how they accept sign-ins, which an existing environment must be rebuilt to adopt.
+    [switch]$ManagedIdentity
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +46,14 @@ function Invoke-Az {
     # Runs az and stops on a non-zero exit code (native commands do not throw by themselves).
     & az @args
     if ($LASTEXITCODE -ne 0) { throw "az $($args[0..2] -join ' ') failed (exit code $LASTEXITCODE)" }
+}
+
+function Get-AlertGroupId {
+    # The action group made by infra/alerts.ps1 (it holds the email address, which is not in
+    # the repository). Empty when it does not exist yet: the alerts then exist but notify nobody.
+    $id = & az monitor action-group show --resource-group $AppResourceGroup --name ag-leyline --query id -o tsv 2>$null
+    if ($LASTEXITCODE -eq 0 -and $id) { return $id.Trim() }
+    return ''
 }
 
 function New-Password {
@@ -99,6 +112,8 @@ try {
         appResourceGroupName  = $AppResourceGroup
         postgresAdminPassword = $password
         webAlwaysOn           = (-not $ScaleToZero.IsPresent)
+        useManagedIdentity    = $ManagedIdentity.IsPresent
+        alertActionGroupId    = (Get-AlertGroupId)
     }
 
     if ($WhatIfPreference) {
@@ -147,6 +162,7 @@ try {
     $secretPlain = [System.Net.NetworkCredential]::new('', $OidcClientSecret).Password
     $second = $base.Clone()
     $second.deployApps = $true
+    $second.alertActionGroupId = (Get-AlertGroupId)  # the group may have been made after pass 1
     $second.appImage = $image
     $second.oidcClientId = $OidcClientId
     $second.oidcTenantId = $OidcTenantId

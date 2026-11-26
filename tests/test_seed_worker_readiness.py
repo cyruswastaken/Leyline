@@ -309,6 +309,16 @@ def test_the_worker_records_a_heartbeat_each_loop(ingestion, db, settings, tmp_p
     assert beat.exists()
 
 
+def test_the_worker_also_says_it_is_alive_in_the_logs_for_the_silence_alert(
+    ingestion, db, settings, caplog
+):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="leyline.worker"):
+        run_worker(ingestion, db, settings, stop=threading.Event(), once=True)
+    assert caplog.text.count("worker heartbeat") == 1  # once per interval, not per loop
+
+
 def test_the_heartbeat_is_refreshed_not_just_created(ingestion, db, settings, tmp_path):
     import os
     import time

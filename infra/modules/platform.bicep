@@ -5,6 +5,9 @@ param location string
 param suffix string
 param tags object
 
+@description('Sign in to the data services with the identity instead of keys: document storage then refuses account keys and the identity gets a data role on it.')
+param useManagedIdentity bool = false
+
 var identityName = 'id-leyline'
 var registryName = 'leylineacr${suffix}'
 var keyVaultName = 'kv-leyline-${suffix}'
@@ -61,6 +64,8 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false
+    // With the identity in use there is no reason for an account key to work at all.
+    allowSharedKeyAccess: !useManagedIdentity
     accessTier: 'Hot'
   }
 }
@@ -100,8 +105,25 @@ resource readSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+// Built-in role: Storage Blob Data Contributor (read, write and delete blobs).
+var blobContributorId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+
+resource useBlobs 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useManagedIdentity) {
+  name: guid(storage.id, identity.id, blobContributorId)
+  scope: storage
+  properties: {
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobContributorId)
+  }
+}
+
 output logAnalyticsName string = logs.name
 output identityId string = identity.id
+output identityName string = identity.name
+output identityClientId string = identity.properties.clientId
+output identityPrincipalId string = identity.properties.principalId
+output blobEndpoint string = storage.properties.primaryEndpoints.blob
 output registryName string = registry.name
 output registryServer string = registry.properties.loginServer
 output keyVaultName string = vault.name

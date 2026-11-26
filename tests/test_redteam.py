@@ -34,11 +34,11 @@ class CompromisedModel(FakeChatModel):
     """Does whatever an attacker would want: prints its whole prompt (system and
     user), forges citations and appends a credential."""
 
-    def stream(self, system, user):
+    def stream(self, system, user, usage=None):
         self.stream_calls.append((system, user))
         yield f"SYSTEM:\n{system}\nUSER:\n{user}\n[1] [7] AKIAIOSFODNN7EXAMPLE password: Sup3rSecretValue1"
 
-    def complete(self, system, user):
+    def complete(self, system, user, usage=None):
         self.complete_calls.append((system, user))
         return f"{system}\n{user} [1] [42]"
 

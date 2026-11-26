@@ -79,7 +79,7 @@ A document is readable by a principal when its ACL contains one of the principal
 - `can_read` (Python) in `services/authorization.py`
 - `readable_by` (SQL predicate) in the same module, applied inside the search query
 
-If an identity provider omits groups from a token (Entra "overage"), the principal is flagged `groups_incomplete` and simply has no groups, so only `*` documents are readable. Resolving overage through Microsoft Graph is planned for Phase 8.
+If an identity provider omits groups from a token (Entra "overage"), the principal is flagged `groups_incomplete` and simply has no groups, so only `*` documents are readable. With `OIDC_RESOLVE_GROUP_OVERAGE` and an administrator's consent, sign-in asks Microsoft Graph for the user's groups instead (mapped names only; any failure keeps the fail-closed result: [decision 0016](adr/0016-resolve-entra-group-overage-through-graph-and-fail-closed.md)).
 
 ### Immediate effect
 
@@ -182,8 +182,10 @@ agent grants no document access.
 - **OpenTelemetry** (`telemetry.py`, off unless `OTEL_EXPORTER` is `console` or `otlp`): spans for
   retrieve, rewrite and generate; metrics for turn outcomes (answered, refused, model_error,
   blocked, rate_limited, cancelled), per-stage duration, time to first token, whole-turn duration,
-  estimated tokens in and out, feedback ratings, and HTTP requests by route template and status
-  class. Token counts are estimates (about four characters per token); cost is not metered.
+  tokens in and out (the provider's own counts; an estimate, labelled, if a server reports none), cost at the
+  configured prices, feedback ratings, and HTTP requests by route template and status class. Each answered turn
+  also stores model, prompt version, tokens, cost and latency on its `NORMAL_REQUEST` event (numbers and names
+  only), and the auditor page sums them by day ([decision 0013](adr/0013-usage-and-cost-live-on-the-turn-event.md)).
 - **Threats and tests:** see [THREAT_MODEL.md](THREAT_MODEL.md); load targets and results are in
   [LOAD_TEST.md](LOAD_TEST.md).
 
@@ -244,9 +246,9 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the outline and [ROADMAP.md](ROADMAP.md) 
 - **Relevance floors are model-specific.** The shipped floors are calibrated for `nomic-embed-text`; another model needs a re-calibration sweep. Near-topic out-of-scope questions ("can I bring my dog to work?") can still return loosely related documents. Without an embedding model, search is keyword-only and refuses far less.
 - **Parsing runs in the worker process.** Inputs are bounded and validated, but a maliciously crafted PDF could still consume CPU/memory in the worker; the job lease limits the blast radius. Sandboxing parsers is a later hardening step.
 - **Prompt injection.** Signal scoring cannot detect every rephrased attack, and a model can still be talked into a bad answer by retrieved text. The controls that do not depend on the model are what bound the damage: authorization before retrieval, a model with no tools, delimited and neutralised context, verified citations and output redaction. A small local model follows grounding rules less reliably than a large hosted one.
-- **Audit trail.** Security events and admin audit events are append-only in Postgres (by trigger; production should also restrict the database role). Event storage is synchronous and fails open, so an outage of the table loses events from it (not from stdout).
+- **Audit trail.** Security events and admin audit events are append-only in Postgres (by trigger; production should also restrict the database role). Event storage fails open: an outage of the table loses events from it (not from stdout). With `EVENT_QUEUE_SIZE` (set in Azure) events are written by a background thread through a bounded queue so requests never wait for the event store; a full queue drops and counts events and says so (`EVENT_STORE_FAILED`). `deploy/sql/app_role.sql` limits the application's database role to INSERT and SELECT on the event tables (a test proves every other operation is denied, including TRUNCATE, which triggers cannot stop).
 - Streaming holds a gunicorn thread for the length of an answer, so concurrency is bounded by threads: the container runs 2 workers x 16 threads (32 concurrent answers). Load targets and measurements are in [LOAD_TEST.md](LOAD_TEST.md); scale out with more containers beyond that.
-- Secrets in environment variables should be replaced with managed identity or Key Vault references in production.
+- In Azure, secrets are Key Vault references; with `-ManagedIdentity` there are no data-service keys at all and the container identity signs in to Postgres, Redis, Blob storage and the models ([decision 0014](adr/0014-the-container-identity-signs-in-to-the-data-services.md)). Alerts and the objectives behind them: [SLO.md](SLO.md), [decision 0015](adr/0015-alerts-from-the-logs-already-written.md).
 - The development Keycloak realm uses shared demo passwords over plain HTTP, and Azurite uses Microsoft's published development key; both exist only for local use.
 - The corpus is synthetic and has not been independently security tested.
 - Grounding reduces hallucination risk but does not prove factual correctness.

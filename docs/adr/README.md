@@ -17,3 +17,10 @@ Format: **Status**, **Context**, **Decision**, **Consequences**, **Alternatives 
 | [0007](0007-calibrate-retrieval-per-embedding-model.md) | Retrieval floors are calibrated and gated per embedding model | Accepted |
 | [0008](0008-no-inline-code-and-no-markup-from-data.md) | No inline code and no markup built from data | Accepted |
 | [0009](0009-ci-deploys-updates-only-with-a-narrow-identity.md) | CI deploys updates only, started by hand, with a narrow identity | Accepted, not yet run |
+| [0010](0010-skip-the-follow-up-rewrite-when-a-question-stands-alone.md) | Skip the follow-up rewrite when a question stands alone | Accepted |
+| [0011](0011-no-cross-encoder-reranker-for-now.md) | No cross-encoder reranker for now (measured, not adopted) | Accepted |
+| [0012](0012-keep-the-document-title-out-of-the-embedding-text.md) | Keep the document title out of the embedding text (measured, not adopted) | Accepted |
+| [0013](0013-usage-and-cost-live-on-the-turn-event.md) | Token usage and cost live on the turn's event, not on the message | Accepted |
+| [0014](0014-the-container-identity-signs-in-to-the-data-services.md) | The container identity signs in to the data services, not keys | Accepted, not yet proven in Azure |
+| [0015](0015-alerts-from-the-logs-already-written.md) | Alerts are built on the logs the containers already write | Accepted, not yet seen firing |
+| [0016](0016-resolve-entra-group-overage-through-graph-and-fail-closed.md) | Resolve Entra group overage through Graph, and fail closed | Accepted, off until consented |

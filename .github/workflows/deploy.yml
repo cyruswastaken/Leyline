@@ -25,6 +25,10 @@ on:
         description: "After deploying, also load the sample corpus (safe to repeat)"
         type: boolean
         default: false
+      allow_destructive_migration:
+        description: "Let a release with a destructive database migration through (an image rollback is then NOT safe; plan to fix forward). Leave off unless you decided this."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -81,8 +85,11 @@ jobs:
       LOCATION: koreacentral
       INPUT_ACTION: ${{ inputs.action }}
       INPUT_SEED: ${{ inputs.seed }}
+      INPUT_ALLOW_DESTRUCTIVE_MIGRATION: ${{ inputs.allow_destructive_migration }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the migration check compares with the commit that is live
 
       - name: Sign in to Azure (OIDC, no stored secret)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -101,12 +108,32 @@ jobs:
           fi
           env_value() { jq -r --arg n "$1" '.properties.template.containers[0].env[] | select(.name == $n) | .value' "$RUNNER_TEMP/web.json"; }
           # The live app is the source of truth for the sign-in settings, so none is stored in GitHub.
+          # How the running environment signs in to its data services (managed identity or keys) is
+          # read from it too, so an update never switches it back; and the images now running are
+          # kept so a release that fails its checks can be rolled back.
+          PREVIOUS_WEB_IMAGE="$(jq -r '.properties.template.containers[0].image' "$RUNNER_TEMP/web.json")"
+          PREVIOUS_WORKER_IMAGE="$(az containerapp show -n leyline-worker -g "$RESOURCE_GROUP" --query 'properties.template.containers[0].image' -o tsv)"
           {
             echo "OIDC_CLIENT_ID=$(env_value OIDC_CLIENT_ID)"
             echo "OIDC_GROUP_NAMES=$(env_value OIDC_GROUP_NAMES)"
             echo "OIDC_METADATA_URL=$(env_value OIDC_METADATA_URL)"
             echo "ACR_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query '[0].loginServer' -o tsv)"
+            echo "USE_MANAGED_IDENTITY=$([ "$(env_value DATABASE_ENTRA_AUTH)" = "true" ] && echo true || echo false)"
+            echo "ALERT_ACTION_GROUP_ID=$(az monitor action-group show -g "$RESOURCE_GROUP" -n ag-leyline --query id -o tsv 2>/dev/null || true)"
+            echo "PREVIOUS_WEB_IMAGE=$PREVIOUS_WEB_IMAGE"
+            echo "PREVIOUS_WORKER_IMAGE=$PREVIOUS_WORKER_IMAGE"
           } >> "$GITHUB_ENV"
+
+      - name: Check the migrations can be rolled back over
+        run: |
+          set -euo pipefail
+          # A rollback puts the previous image back on the new schema, which is only safe if
+          # nothing the old code needs was removed or made required. The commit that is live is
+          # the tag of its image (CI deploys tag by commit; a workstation deploy tags by time, and
+          # then only the newest migration is checked).
+          args=(--since "${PREVIOUS_WEB_IMAGE##*:}")
+          if [ "$INPUT_ALLOW_DESTRUCTIVE_MIGRATION" = "true" ]; then args+=(--allow); fi
+          python3 scripts/check_migrations.py "${args[@]}"
 
       - name: Work out the image and the template parameters
         run: |
@@ -120,12 +147,14 @@ jobs:
           echo "::add-mask::$PGPASS"
           jq -n --arg pw "$PGPASS" --arg image "$IMAGE" --arg cid "$OIDC_CLIENT_ID" --arg tid "$TENANT_ID" \
             --arg groups "$OIDC_GROUP_NAMES" --arg location "$LOCATION" \
+            --arg mi "$USE_MANAGED_IDENTITY" --arg ag "$ALERT_ACTION_GROUP_ID" \
             '{"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
               contentVersion:"1.0.0.0",
               parameters:{
                 location:{value:$location}, appResourceGroupName:{value:"rg-leyline-app"},
                 postgresAdminPassword:{value:$pw}, deployApps:{value:true}, appImage:{value:$image},
                 oidcClientId:{value:$cid}, oidcTenantId:{value:$tid}, oidcGroupNames:{value:$groups},
+                useManagedIdentity:{value:($mi == "true")}, alertActionGroupId:{value:$ag},
                 writeOidcSecret:{value:false}}}' > "$RUNNER_TEMP/params.json"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
           echo "Image: $IMAGE"
@@ -145,6 +174,7 @@ jobs:
           docker push "$IMAGE"
 
       - name: Deploy the apps
+        id: deploy
         if: ${{ inputs.action == 'deploy' }}
         run: |
           set -euo pipefail
@@ -172,6 +202,7 @@ jobs:
           fi
 
       - name: Restart the apps (they pick up the new secrets) and wait for readiness
+        id: ready
         if: ${{ inputs.action == 'deploy' }}
         run: |
           set -euo pipefail
@@ -184,13 +215,51 @@ jobs:
             sleep 10
             if curl -fsS "https://$fqdn/readyz" | jq -e '.status == "ready"' >/dev/null 2>&1; then
               echo "Ready after attempt $attempt."
-              {
-                echo "### Deployed"
-                echo "- Image: \`$IMAGE\`"
-                echo "- Site: https://$fqdn"
-              } >> "$GITHUB_STEP_SUMMARY"
+              echo "SITE_FQDN=$fqdn" >> "$GITHUB_ENV"
               exit 0
             fi
           done
           echo "::error::The site did not become ready. See docs/RUNBOOKS.md section 2."
+          exit 1
+
+      - name: Smoke test the deployed site (signed out)
+        id: smoke
+        if: ${{ inputs.action == 'deploy' }}
+        run: |
+          set -euo pipefail
+          # Up, public pages work, and every protected page refuses a stranger. A release that
+          # fails this is rolled back by the next step.
+          python3 scripts/smoke_test.py "https://$SITE_FQDN"
+          {
+            echo "### Deployed"
+            echo "- Image: \`$IMAGE\`"
+            echo "- Site: https://$SITE_FQDN"
+            echo "- Smoke test: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Roll back to the previous image (the release failed its checks)
+        if: ${{ failure() && inputs.action == 'deploy' && steps.deploy.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          echo "::warning::The release failed after it was deployed; putting the previous image back."
+          if [ -z "$PREVIOUS_WEB_IMAGE" ] || [ "$PREVIOUS_WEB_IMAGE" = "$IMAGE" ]; then
+            echo "::error::There is no different previous image to go back to. See docs/RUNBOOKS.md section 15."
+            exit 1
+          fi
+          az containerapp update -n leyline-web -g "$RESOURCE_GROUP" --image "$PREVIOUS_WEB_IMAGE" --output none
+          az containerapp update -n leyline-worker -g "$RESOURCE_GROUP" --image "$PREVIOUS_WORKER_IMAGE" --output none
+          fqdn="$(az containerapp show -n leyline-web -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+          for attempt in $(seq 1 30); do
+            sleep 10
+            if curl -fsS "https://$fqdn/readyz" | jq -e '.status == "ready"' >/dev/null 2>&1; then
+              {
+                echo "### Rolled back"
+                echo "- The release \`$IMAGE\` failed its checks."
+                echo "- Running again: \`$PREVIOUS_WEB_IMAGE\` (data written meanwhile is not undone; a migration is not undone)."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::The release failed its checks and was rolled back to the previous image."
+              exit 1
+            fi
+          done
+          echo "::error::Rolled back, but the site is still not ready. See docs/RUNBOOKS.md sections 2 and 15."
           exit 1

@@ -27,6 +27,7 @@ from leyline.extensions import (
     conversation_service,
     database,
     rate_limiter,
+    reranker,
     search_index,
 )
 from leyline.services.chat_service import StreamingTurn, begin_turn, process_message
@@ -94,6 +95,7 @@ def chat() -> ResponseReturnValue:
         search=search_index(),
         database=database(),
         model=chat_model(),
+        reranker=reranker(),
     )
 
     if not result["allowed"]:
@@ -152,6 +154,7 @@ def chat_stream() -> ResponseReturnValue:
         database=database(),
         model=chat_model(),
         conversations=conversation_service(),
+        reranker=reranker(),
     )
     if not isinstance(turn, StreamingTurn):
         return jsonify({"error": turn["error"], "reason": turn["reason"]}), turn[

@@ -19,8 +19,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from leyline.evals.golden import GoldenCase
+from leyline.ports.rerank import Reranker
 from leyline.ports.search import SearchHit, SearchIndex
 from leyline.services.authorization import can_read
+from leyline.services.reranking import rerank_hits
 
 RECALL_KS = (1, 3, 5)
 DEFAULT_LIMIT = 20  # chunks requested per question; deduplicated to documents
@@ -63,6 +65,16 @@ def ordered_documents(
     return ordered, scores
 
 
+@dataclass(frozen=True)
+class RerankSettings:
+    """Evaluate with a reranker applied after search, as the chat pipeline does."""
+
+    reranker: Reranker
+    candidates: int = 15  # chunks fetched from search for the reranker to score
+    keep: int = 5  # best chunks kept
+    min_score: float = 0.0  # candidates scoring below this are dropped
+
+
 def run_eval(
     search: SearchIndex,
     cases: Sequence[GoldenCase],
@@ -70,13 +82,26 @@ def run_eval(
     refs: Mapping[uuid.UUID, str],
     acl: Mapping[str, frozenset[str]],
     limit: int = DEFAULT_LIMIT,
+    rerank: RerankSettings | None = None,
 ) -> EvalReport:
     results: list[CaseResult] = []
     leaks: list[tuple[str, str]] = []
 
     for case in cases:
         principal = case.principal
-        hits = search.search(principal, case.question, limit=limit)
+        if rerank is None:
+            hits = search.search(principal, case.question, limit=limit)
+        else:
+            candidates = search.search(
+                principal, case.question, limit=max(rerank.candidates, rerank.keep)
+            )
+            hits, _ = rerank_hits(
+                rerank.reranker,
+                case.question,
+                candidates,
+                keep=rerank.keep,
+                min_score=rerank.min_score,
+            )
         returned, scores = ordered_documents(hits, refs)
 
         # The one check that must never fail, for every kind of case.
@@ -128,7 +153,12 @@ def run_eval(
 def summarise(results: Sequence[CaseResult]) -> dict[str, float]:
     answerable = [r for r in results if r.case.kind == "answerable"]
     restricted = [r for r in results if r.case.kind == "restricted"]
-    unanswerable = [r for r in results if r.case.kind == "unanswerable"]
+    unanswerable = [
+        r for r in results if r.case.kind == "unanswerable" and r.case.tier != "near"
+    ]
+    near = [
+        r for r in results if r.case.kind == "unanswerable" and r.case.tier == "near"
+    ]
 
     summary: dict[str, float] = {}
     for k in RECALL_KS:
@@ -141,6 +171,9 @@ def summarise(results: Sequence[CaseResult]) -> dict[str, float]:
         else 0.0
     )
     summary["refusal_rate"] = _share(not r.refs for r in unanswerable)
+    if near:
+        # Unanswerable questions that sit next to what the knowledge base covers.
+        summary["near_refusal_rate"] = _share(not r.refs for r in near)
     summary["restricted_pass_rate"] = _share(
         not any(ref in r.case.forbid for ref in r.refs) for r in restricted
     )
@@ -211,6 +244,14 @@ def format_report(report: EvalReport, *, verbose: bool = False) -> str:
         f"  recall@5              {s['recall@5']:.3f}",
         f"  mrr                   {s['mrr']:.3f}",
         f"  refusal_rate          {s['refusal_rate']:.3f}   (unanswerable: no hits)",
+        *(
+            [
+                f"  near_refusal_rate     {s['near_refusal_rate']:.3f}   "
+                "(unanswerable but close to covered topics)"
+            ]
+            if "near_refusal_rate" in s
+            else []
+        ),
         f"  restricted_pass_rate  {s['restricted_pass_rate']:.3f}   (no forbidden doc)",
         f"  acl_leaks             {int(s['acl_leaks'])}       (MUST be 0)",
         f"  avg_docs_returned     {s['avg_docs_returned']:.2f}",

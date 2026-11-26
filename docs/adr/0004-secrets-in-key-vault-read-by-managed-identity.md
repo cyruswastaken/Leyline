@@ -1,6 +1,8 @@
 # 0004. Secrets live in Key Vault and are read by a managed identity
 
-**Status:** Accepted, **partly met**. The roadmap goal "no stored keys" is not fully reached.
+**Status:** Accepted, **partly met**. The roadmap goal "no stored keys" is not fully reached. Phase 11
+([0014](0014-the-container-identity-signs-in-to-the-data-services.md)) builds the remaining part as an option
+(`-ManagedIdentity`); it is not yet proven on a rebuilt environment, so this record stays "partly met" until then.
 
 ## Context
 The app needs a database URL, a Redis URL, a storage connection string, a model key and the Entra client

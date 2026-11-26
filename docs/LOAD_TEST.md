@@ -113,10 +113,59 @@ The ceiling itself was **not** tested (that would need more users and would thro
 - 8 users for 5 minutes, one container, a short run: no soak, no behaviour at the quota ceiling.
 - 37 and 87 turns are enough to see the shape, not to trust a 95th percentile to the nearest 100 ms.
 
-**Open question (needs a decision, not a tweak):** the first-token target. Options: keep 2.5 s and reduce the
-work before the first word (for example, skip the rewrite when a question already stands alone, which saves
-about a second on follow-ups; this changes retrieval behaviour, so it needs the retrieval and answer evals), or
-agree targets per kind of question from this baseline. Until one of those is done, the latency gate stays open.
+### After skipping the rewrite for standalone follow-ups (2026-11-24)
+
+Same method (8 users, 5 minutes, 10 to 20 s pauses, Azure models, a warmed Keycloak), with the rewrite skipped
+when a question stands alone (`docs/EVALUATION.md`, "Follow-up questions"). Before this, a probe at several
+`reasoning_effort` settings showed no first-token gain (about 1.0 s at the default and at "none" and "minimal",
+1.3 s at "low"), so no such setting was added.
+
+| 8 users, 5 minutes | Turns | `first_token` p50 / p95 | `turn_total` p95 |
+| --- | --- | --- | --- |
+| Before (every follow-up rewritten) | 87 | 2.8 s / 3.8 s | 4.0 s |
+| After | 87 | 2.2 s / **3.0 s** | 3.2 s |
+| After, new conversation | 31 | 2.2 s / 3.1 s | 3.1 s |
+| After, follow-up | 56 | 2.2 s / 3.1 s | 3.3 s |
+
+No request failed (528 requests); `GET /api/conversations` p95 13 ms, `GET /me` p95 13 ms. Follow-ups now cost the
+same as new questions (the 0.9 s gap is gone for the questions that stand alone; the load test's questions mostly
+do), but **first token p95 is still 3.0 s against the 2.5 s target (missed)**. The median fell 0.6 s. What is left
+is the embedding call (about 0.4 s), the model's first token (about 1.0 s), the 96-character holdback, and
+Leyline's own work plus the laptop-to-Korea Central network, which were not measured separately. Questions that really depend on earlier ones
+are still rewritten and are slower; this test does not contain many. The test ran on one laptop with 87 turns, so the
+95th percentile is good to about half a second.
+
+### The same stages measured inside Azure (2026-11-24)
+
+To remove the laptop-to-Korea hop, the pre-answer stages were timed from a container in the deployed environment:
+the manual task job `leyline-task` ran a one-off script (started through the Azure API with the same image,
+secrets and settings as the web app; nothing was written, and the script is not in the repository). It
+timed 24 new questions (the load test's 8 questions, 3 rounds, one at a time) with the deployed models, database
+and floors, as a user in the `staff` group.
+
+| Stage (new question) | p50 | p95 |
+| --- | --- | --- |
+| Embedding call alone | 230 ms | 360 ms |
+| Search (embedding + Postgres) | 320 ms | 480 ms |
+| Model: first token | 620 ms | 990 ms |
+| Model: first 96 characters (the holdback) | 740 ms | 1.07 s |
+| **Search + first 96 characters** | **1.07 s** | **1.49 s** |
+
+No errors. Compared with the laptop (embedding 0.4 s, model first token 1.0 s), the same calls are 40% faster from
+inside Azure, so the app's own time to the first visible word for a new question is about **1.5 s at p95, well
+under the 2.5 s target**. A follow-up that really needs a rewrite adds one more model call (about 0.6 to 1.0 s),
+which puts it near the target (about 2.1 to 2.5 s) rather than clearly under it.
+
+**What this does not show:** it times the stages, not the app. It leaves out the session and CSRF checks, the
+database re-authorization and conversation writes, the SSE stream, TLS and the network to a user's browser,
+Entra sign-in, and any concurrency (one request at a time). The real figure will be higher than 1.5 s by those
+amounts, which are small compared with a model call but unmeasured. 24 samples, one region, one afternoon.
+
+**The gate:** the end-to-end first-token p95 on the deployed site has not been measured, because Locust cannot
+sign in through Entra. The two things that would close it with evidence are a first-token histogram from the
+running app (the metric exists in `telemetry.py`; Phase 11 exports it to Application Insights and alerts when its
+p95 passes 2.5 s) or a browser run by a person against the live site. Until then the gate stays open, with the
+target unchanged.
 
 **Running it against a real model** (do not commit keys):
 1. Keep the key out of files: put it in the shell environment for the command only, and reference it from a

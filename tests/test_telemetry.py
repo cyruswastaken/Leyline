@@ -87,8 +87,10 @@ def test_a_blocking_answer_records_stages_outcome_and_tokens(client, add_doc, pr
     stages = {a["stage"] for a, _ in metrics["leyline.chat.stage.duration"]}
     assert {"retrieve", "generate"} <= stages
     assert metrics["leyline.chat.outcomes"] == [({"outcome": "answered"}, 1)]
-    directions = {a["direction"] for a, _ in metrics["leyline.llm.tokens.estimated"]}
+    directions = {a["direction"] for a, _ in metrics["leyline.llm.tokens"]}
     assert directions == {"input", "output"}
+    # the fake model reports no counts, so these are estimates and say so
+    assert {a["source"] for a, _ in metrics["leyline.llm.tokens"]} == {"estimate"}
     names = {s.name for s in spans.get_finished_spans()}
     assert {"chat.retrieve", "chat.generate"} <= names
 

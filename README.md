@@ -40,8 +40,8 @@ This is a portfolio project being built to production standards. The included do
 - Redis (sessions, rate limits)
 - PostgreSQL with pgvector (hybrid keyword + semantic search), Azure Blob Storage (Azurite locally); Azure AI Search planned for the cloud deployment
 - Ollama / any OpenAI-compatible endpoint for embeddings (`nomic-embed-text` locally)
-- Vanilla JavaScript and server-rendered HTML
-- Docker, GitHub Actions, pytest, ruff, mypy
+- TypeScript (Vite, Tailwind) and server-rendered HTML
+- Docker, GitHub Actions, pytest, Vitest, Playwright with axe, ruff, mypy
 
 ## Repository layout
 
@@ -71,7 +71,7 @@ This is a portfolio project being built to production standards. The included do
 
 ## Project status
 
-Leyline is under active development and is **not yet safe for real data**. Phases 0 (security fixes, tests, CI, container), 1 (identity and access), 2 (database, document ingestion, per-document ACLs) and 3 (hybrid retrieval and an evaluation gate), 4 (chat experience: conversations, streaming, citations, guardrails) 5 (ticket escalation) and 6 (hardening and observability) and 7 (frontend design system) are complete; Phase 8 (Azure deployment, needs a subscription) is next. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
+Leyline is a portfolio project with synthetic data and is **not yet safe for real data**. Phases 0 to 10 (security, identity, ingestion, hybrid retrieval, chat, tickets, hardening, frontend, Azure deployment, latency work and quality upgrades) are complete. Phase 11 (production operations on Azure) is built and tested locally but not yet run on Azure, and Phase 12 (browser tests, then a full rebuild verification) is in progress. One production gate is still open: first-token latency. See the [roadmap](docs/ROADMAP.md) and the [architecture and security notes](docs/ARCHITECTURE.md).
 
 ## License
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import Engine, create_engine, event, text
@@ -46,7 +46,13 @@ class Database:
     """Owns the engine. Connections are opened lazily, so constructing this
     does not require the database to be reachable."""
 
-    def __init__(self, url: str, *, pool_size: int = 5) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        pool_size: int = 5,
+        password_provider: Callable[[], str] | None = None,
+    ) -> None:
         url, tls = _split_tls_option(url)
         self.engine: Engine = create_engine(
             url,
@@ -56,6 +62,18 @@ class Database:
             pool_pre_ping=True,
             connect_args={"timeout": CONNECT_TIMEOUT_SECONDS, **tls},
         )
+
+        if password_provider is not None:
+            # A managed identity signs in with a short-lived token as the password,
+            # so ask for a fresh one every time the pool opens a connection.
+            @event.listens_for(self.engine, "do_connect")
+            def _fresh_token(
+                dialect: object,
+                conn_rec: object,
+                cargs: list[object],
+                cparams: dict[str, object],
+            ) -> None:
+                cparams["password"] = password_provider()
 
         @event.listens_for(self.engine, "connect")
         def _set_timeouts(dbapi_connection: object, _: ConnectionPoolEntry) -> None:

@@ -6,14 +6,22 @@ and CI fails on a quality regression or on **any** ACL leak.
 
 ## What is measured
 
-The golden set is [`evals/golden.jsonl`](../evals/golden.jsonl): 78 questions, asked as one of
-four personas that mirror the demo users (`employee`, `security`, `hr`, `finance`).
+The golden set is [`evals/golden.jsonl`](../evals/golden.jsonl): 126 questions, asked as one of
+four personas that mirror the demo users (`employee`, `security`, `hr`, `finance`). The first 78
+were written in Phase 3; 48 more (ids `a101`+, `r101`+, `u101`+) were added on 2026-11-24, written from
+the corpus before anything was measured, so the failures they show are kept.
 
 | Kind | Count | Correct behaviour |
 | --- | --- | --- |
-| `answerable` | 54 | A document the asker may read answers it; it should rank high |
-| `restricted` | 12 | The real answer is in a document the asker may **not** read; it must never be returned |
-| `unanswerable` | 12 | Nothing in the knowledge base answers it; the right result is *no hits* |
+| `answerable` | 78 | A document the asker may read answers it; it should rank high (24 added: public documents beside restricted ones on the same subject, and readers who may see the restricted one) |
+| `restricted` | 24 | The real answer is in a document the asker may **not** read; it must never be returned |
+| `unanswerable` | 12 + 12 | Nothing in the knowledge base answers it; the right result is *no hits*. The 12 added are tier `near`: close to a covered topic ("How many sick days do I get?") |
+
+Results on the 126-case set (2026-11-24): local model (nomic) recall@1 0.910, recall@3 0.987, recall@5 1.000,
+MRR 0.949, standard refusal 0.833, **near-topic refusal 0.083**, 0 ACL leaks. Azure (text-embedding-3-small):
+recall@1 0.962, recall@5 1.000, MRR 0.979, standard refusal 1.000, **near-topic refusal 0.417**, 0 ACL leaks.
+Refusing questions next to covered topics is the known weak spot (floors in `evals/thresholds*.json` pin the
+baseline); [decision 0011](adr/0011-no-cross-encoder-reranker-for-now.md) records the reranker that did not fix it.
 
 Questions are natural paraphrases on purpose ("Someone stole my backpack with my work
 laptop inside" for a *lost or stolen device* document). Do not tune them to the
@@ -24,6 +32,7 @@ document wording: that would hide exactly the weakness semantic search exists to
 | `recall@1/3/5` | Answerable: an acceptable document is in the top k (documents, not chunks) |
 | `mrr` | Answerable: mean reciprocal rank of the first acceptable document |
 | `refusal_rate` | Unanswerable: share where nothing was returned |
+| `near_refusal_rate` | Unanswerable, tier `near`: the same, scored on its own so the hard cases do not move the standard rate |
 | `restricted_pass_rate` | Restricted: share where no forbidden document was returned |
 | `acl_leaks` | **Every** case: documents returned that the asker may not read. Must be 0 |
 
@@ -113,13 +122,76 @@ as figures, so spelling out an invented number does not hide it (tests in `tests
 that, a new run of the same 78 questions scores 0.981, level with the 3B model's figure (which was measured
 before the fix and has not been re-scored).
 
-The one remaining case (a051) repeats the figure from the user's own question ("fifteen thousand"); the
-source only says "up to twenty thousand". The metric compares with the sources alone, so a figure the user
-stated and the answer repeats counts as unsupported. It is not an invented number, and the metric does not yet
-exempt the question's own figures (the same was true for digits before).
+The one remaining case (a051) repeated the figure from the user's own question ("fifteen thousand"); the
+source only says "up to twenty thousand". The metric compared with the sources alone, so a figure the user
+stated and the answer repeated counted as unsupported. It was not an invented number. The check now also treats
+the question's own figures as known (`tests/test_answer_evals.py`); a figure in neither the sources nor the
+question is still flagged. Re-run on 2026-11-24 with the same model and corpus: answered 0.963, cites a source
+1.000, cites an expected document 1.000, **figures supported 1.000**, refused 1.000, restricted pass 1.000, 0 ACL
+leaks. Only the metric changed; the answers are as before.
+
+## Follow-up questions
+
+A follow-up such as "and on a Mac?" needs context, but asking the chat model to rewrite every follow-up costs a
+model round trip (about a second) before retrieval can start. `services/rewrite_policy.py` decides without a model
+call: a message with a reference word ("it", "that", "they", "same", "again"...), a continuation opener ("and",
+"what about", "why"), or fewer than four words is rewritten; anything else is searched as typed. It only reads the
+question text, so it cannot widen what anyone may read. `REWRITE_MODE=always` restores rewriting every follow-up.
+
+`evals/followups.jsonl` has 30 two-turn conversations written from the corpus (28 answerable, 2 restricted,
+4 personas), and `python -m leyline.evals --followups` compares three ways of searching them. "Ideal rewrite" is the
+author's hand-written standalone question, so it is a ceiling and says nothing about how good the real model's
+rewrites are.
+
+| Policy (hybrid, nomic-embed-text) | recall@5 | MRR |
+| --- | --- | --- |
+| Message as typed | 0.929 | 0.833 |
+| Ideal rewrite for every follow-up | 0.964 | 0.866 |
+| **Shipped rule** (rewrite only when needed) | **0.964** | **0.884** |
+
+The rule skips 40% of rewrites, matches the ideal rewrite's recall, leaks nothing (0 ACL leaks, restricted pass
+1.000) and agrees with the author's own label on 29 of 30 questions. Its one miss (f008, "Where do they park?")
+fails with the ideal rewrite too. Floors are in `evals/thresholds.json` (`followups`) and enforced by
+`tests/test_evals.py`. Limits: 30 cases is a small sample, the questions are mine, and this runs on the nomic
+recording only (the Azure embedding recording has no follow-up queries).
 
 The run was made against a throwaway local database (`leyline_evals`, loaded with the Azure embedding model)
 and the Azure chat deployment, so it measures the model and the prompt, not the deployed database.
+
+## Answer quality in CI (recorded answers)
+
+A live model cannot run in CI, but everything Leyline does around it can. `evals/answers.azure.json` holds
+gpt-5.4-mini's raw replies to the golden questions (98 answers, recorded 2026-11-24 with
+`python -m leyline.evals.answers --record-answers evals/answers.azure.json`), keyed by a hash of the exact
+prompt. `tests/test_answers_replay.py` replays them through today's retrieval (with the recorded Azure
+embeddings and floors), context, prompt, redaction and citation checks and grades the result against
+`evals/thresholds.answers.azure.json`.
+
+| Metric (recorded run) | Value | Floor |
+| --- | --- | --- |
+| answered (answerable) | 0.949 | 0.90 |
+| cites a source / an expected document | 1.000 / 1.000 | 0.97 |
+| figures supported by sources | 1.000 | 0.97 |
+| citations grounded in their source | 0.962 | 0.92 |
+| refused (unanswerable) | 0.917 | 0.88 |
+| restricted pass | 1.000 | 1.00 |
+| ACL leaks | 0 | 0 |
+
+"Grounded" is deterministic, no model: every sentence with a citation must share at least a quarter of its
+content words with the source it cites. A changed prompt, context builder, chunker or retrieval changes the
+prompt text, so replay stops with "no recorded answer" and tells you to re-record, rather than grading something
+else. It guards Leyline's own handling of an answer; it says nothing about another model, which still needs a live
+run (about 100 model calls).
+
+## Reranking, the title in the embedding, and what was not adopted
+
+Two retrieval ideas were built and measured on 2026-11-24 and **not adopted**; both stay available and off.
+See [0011](adr/0011-no-cross-encoder-reranker-for-now.md) (a `bge-reranker-base` cross-encoder after search: lower
+recall, and no score floor that refuses more without dropping correct answers) and
+[0012](adr/0012-keep-the-document-title-out-of-the-embedding-text.md) (the document title in front of each chunk's
+embedded text: recall@5 1.000 to 0.987). To measure a reranker again:
+`docker compose -f compose.yaml -f compose.rerank.yaml up -d rerank`, then
+`python -m leyline.evals --index hybrid --embeddings evals/embeddings.json --rerank-url http://127.0.0.1:8081`.
 
 ## Running it
 

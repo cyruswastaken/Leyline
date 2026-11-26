@@ -29,6 +29,8 @@ from leyline.services.document_loader import parse_document
 
 Kind = Literal["answerable", "restricted", "unanswerable"]
 KINDS: tuple[Kind, ...] = ("answerable", "restricted", "unanswerable")
+Tier = Literal["standard", "near"]
+TIERS: tuple[Tier, ...] = ("standard", "near")
 
 # Personas mirror the demo users in deploy/keycloak/leyline-realm.json.
 PERSONAS: dict[str, tuple[str, ...]] = {
@@ -53,6 +55,11 @@ class GoldenCase:
     expect: tuple[str, ...] = ()
     # These documents must never be returned (restricted only).
     forbid: tuple[str, ...] = ()
+    # "near" marks an unanswerable question that is close to what the knowledge
+    # base covers ("how many sick days do I get?" next to the leave policy). They
+    # are the hardest refusals and are scored on their own, so they show the weak
+    # spot without moving the standard refusal rate.
+    tier: Tier = "standard"
 
     @property
     def principal(self) -> Principal:
@@ -95,6 +102,7 @@ def load_golden(path: Path, oracle: Mapping[str, frozenset[str]]) -> list[Golden
                 kind=raw["kind"],
                 expect=tuple(raw.get("expect", ())),
                 forbid=tuple(raw.get("forbid", ())),
+                tier=raw.get("tier", "standard"),
             )
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise GoldenError(f"{path.name}:{number}: invalid case ({exc})") from None
@@ -117,6 +125,10 @@ def _validate(
         raise GoldenError(f"{where}: unknown kind {case.kind!r}")
     if not case.question.strip():
         raise GoldenError(f"{where}: empty question")
+    if case.tier not in TIERS:
+        raise GoldenError(f"{where}: unknown tier {case.tier!r}")
+    if case.tier == "near" and case.kind != "unanswerable":
+        raise GoldenError(f"{where}: only unanswerable cases can be 'near'")
     principal = case.principal
 
     for ref in (*case.expect, *case.forbid):

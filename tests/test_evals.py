@@ -250,6 +250,62 @@ def test_an_unknown_document_in_results_counts_as_a_leak():
     assert report.summary["acl_leaks"] == 1
 
 
+def test_near_topic_refusals_are_scored_apart_from_the_standard_refusal_rate():
+    cases = [
+        GoldenCase("u1", "employee", "q-none", "unanswerable"),
+        GoldenCase("u2", "employee", "q-junk", "unanswerable"),
+        GoldenCase("n1", "employee", "q-near-ok", "unanswerable", tier="near"),
+        GoldenCase("n2", "employee", "q-near-bad", "unanswerable", tier="near"),
+        GoldenCase("n3", "employee", "q-near-bad2", "unanswerable", tier="near"),
+    ]
+    index = ScriptedIndex(
+        {
+            "q-none": [],
+            "q-junk": [hit("PUB-2", 0.1)],
+            "q-near-ok": [],
+            "q-near-bad": [hit("PUB-1")],
+            "q-near-bad2": [hit("PUB-1")],
+        }
+    )
+    report = run_eval(index, cases, refs=REFS, acl=ORACLE)
+
+    assert report.summary["refusal_rate"] == 0.5  # u1 refused, u2 not
+    assert report.summary["near_refusal_rate"] == pytest.approx(1 / 3)
+    assert "near_refusal_rate" in format_report(report)
+
+
+def test_the_near_rate_is_not_reported_without_near_cases():
+    report = run_eval(
+        ScriptedIndex({"q-none": []}),
+        [GoldenCase("u1", "employee", "q-none", "unanswerable")],
+        refs=REFS,
+        acl=ORACLE,
+    )
+    assert "near_refusal_rate" not in report.summary
+    assert "near_refusal_rate" not in format_report(report)
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        (case(kind="unanswerable", tier="sideways"), "unknown tier"),
+        (case(expect=["PUB-1"], tier="near"), "only unanswerable"),
+    ],
+)
+def test_a_bad_tier_is_rejected(tmp_path, line, message):
+    with pytest.raises(GoldenError, match=message):
+        load_golden(write_golden(tmp_path, line), ORACLE)
+
+
+def test_the_shipped_set_has_near_topic_cases_and_a_wider_mix(real_oracle):
+    cases = load_golden(GOLDEN, real_oracle)
+    near = [c for c in cases if c.tier == "near"]
+    assert len(near) >= 12 and {c.kind for c in near} == {"unanswerable"}
+    assert len(cases) >= 120
+    # restricted cases cover every persona that may be refused something
+    assert {c.persona for c in cases if c.kind == "restricted"} == set(PERSONAS)
+
+
 # --- thresholds -----------------------------------------------------------------------------
 
 

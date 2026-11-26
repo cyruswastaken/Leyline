@@ -118,6 +118,57 @@ jobs:
       - name: Bundle size budget
         run: npm run budget
 
+  e2e:
+    name: Browser tests (Playwright + axe)
+    runs-on: ubuntu-latest
+    needs: [quality, frontend]
+    timeout-minutes: 30
+    env:
+      COMPOSE: docker compose -p leyline-e2e -f compose.yaml -f compose.e2e.yaml
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the test runner and its browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Start the stack (real sign-in, fake chat model)
+        run: $COMPOSE up -d --build --wait --wait-timeout 300
+
+      - name: Load the sample corpus
+        run: $COMPOSE run --rm app python -m leyline.seed
+
+      - name: Browser journeys and accessibility audit
+        working-directory: frontend
+        run: npm run e2e
+
+      # Traces hold session cookies of the throwaway demo accounts only.
+      - name: Keep the report when something failed
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+
+      - name: Logs on failure
+        if: failure()
+        run: $COMPOSE logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: $COMPOSE down -v
+
   docker:
     name: Container build and smoke test
     runs-on: ubuntu-latest

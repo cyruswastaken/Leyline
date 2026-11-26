@@ -10,9 +10,11 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 from leyline.constants import EMBEDDING_DIMENSIONS
 
@@ -45,6 +47,14 @@ class Settings(BaseSettings):
     # Turn off for reasoning models (GPT-5 family on Azure OpenAI), which only
     # accept their default temperature and answer 400 to any other value.
     llm_send_temperature: bool = True
+    # Ask the provider for token counts on streamed answers (the OpenAI
+    # ``stream_options`` parameter). Turn off for a server that rejects it; counts
+    # then fall back to estimates.
+    llm_stream_usage: bool = True
+    # Prices per million tokens in USD, to record what each answer cost. 0 records
+    # a cost of 0 (unknown); set both from your provider's price list.
+    llm_price_input_per_million: float = Field(default=0.0, ge=0)
+    llm_price_output_per_million: float = Field(default=0.0, ge=0)
     llm_timeout_seconds: float = Field(default=30, gt=0)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
     # Consecutive failures before the circuit opens, and how long it stays open.
@@ -67,6 +77,30 @@ class Settings(BaseSettings):
     # OIDC_GROUP_NAMES='{"<object id>": "hr"}'. Empty (Keycloak sends names) means the
     # claim is used as it is; when set, unmapped groups are ignored.
     oidc_group_names: dict[str, str] = Field(default_factory=dict)
+    # Entra puts at most 200 groups in a token; a user in more gets an "overage"
+    # marker. When this is on, sign-in then asks Microsoft Graph for the user's groups
+    # (needs the delegated GroupMember.Read.All permission, granted by an admin, and
+    # that scope in OIDC_SCOPES). Off, or if Graph fails, such a user keeps only the
+    # `*` documents.
+    oidc_resolve_group_overage: bool = False
+    graph_base_url: str = "https://graph.microsoft.com/v1.0"
+    graph_timeout_seconds: float = Field(default=5.0, gt=0)
+
+    # --- Azure managed identity (no stored keys) --------------------------------
+    # In Azure the container's managed identity can sign in to the data services, so
+    # none of their keys need to exist (docs/DEPLOYMENT.md, decision 0004). Each is
+    # off by default: locally the services keep their passwords and keys.
+    #   AZURE_CLIENT_ID          client id of the user-assigned identity to use
+    #   DATABASE_ENTRA_AUTH      DATABASE_URL has no password; a token is the password
+    #   BLOB_ACCOUNT_URL         storage account address, instead of a connection string
+    #   REDIS_ENTRA_USERNAME     the identity's object id; REDIS_URL has no password
+    #   LLM_ENTRA_AUTH / EMBEDDING_ENTRA_AUTH   no API key; a token is sent instead
+    azure_client_id: str | None = None
+    database_entra_auth: bool = False
+    blob_account_url: str | None = None
+    redis_entra_username: str | None = None
+    llm_entra_auth: bool = False
+    embedding_entra_auth: bool = False
 
     # --- Sessions (server-side, in Redis) ---------------------------------
     redis_url: str = "redis://localhost:6379/0"
@@ -108,6 +142,10 @@ class Settings(BaseSettings):
     # stored vectors: re-index every document afterwards.
     embedding_query_prefix: str = ""
     embedding_document_prefix: str = ""
+    # Put the document title in front of every chunk's text before embedding it
+    # (the stored text is unchanged). Changing it makes stored vectors stale:
+    # re-index every document afterwards, and re-record evals/embeddings*.json.
+    embedding_include_title: bool = False
     embedding_batch_size: int = Field(default=32, gt=0, le=256)
 
     # --- Ingestion worker -----------------------------------------------------
@@ -139,6 +177,21 @@ class Settings(BaseSettings):
     # At most this many chunks of one document in a result list.
     search_max_chunks_per_document: int = Field(default=2, gt=0)
 
+    # --- Reranking (optional) ---------------------------------------------------
+    # A cross-encoder behind a TEI-style /rerank endpoint (adapters/rerank_http.py).
+    # Unset means no reranker: search order is used as it is.
+    rerank_base_url: str | None = None
+    rerank_model: str = ""
+    rerank_api_key: SecretStr | None = None
+    rerank_timeout_seconds: float = Field(default=3.0, gt=0)
+    # Candidates fetched from search for the reranker to choose from (the best
+    # search_top_k of them are kept).
+    rerank_candidates: int = Field(default=15, gt=0, le=50)
+    # Candidates scoring below this (0 to 1) are dropped, so an off-topic question
+    # whose best match is weak finds nothing instead of loosely related text. 0 keeps
+    # everything. Calibrate it per model with the evals (docs/EVALUATION.md).
+    rerank_min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
     # --- Chat ----------------------------------------------------------------
     # Rough token budget for retrieved text in one prompt (about 4 chars/token).
     llm_context_token_budget: int = Field(default=3000, gt=200)
@@ -152,6 +205,13 @@ class Settings(BaseSettings):
     conversation_retention_days: int = Field(default=0, ge=0)
     # A message scoring at least this on injection signals is refused (403).
     injection_block_score: int = Field(default=4, gt=0)
+
+    # --- Security events -------------------------------------------------------
+    # 0 stores each event inside the request (simple, and what tests rely on). A
+    # number above 0 stores them on a background thread through a queue of that many
+    # slots: requests no longer wait for the event store, and when the writer falls
+    # behind, new events are dropped and counted (the stdout line remains).
+    event_queue_size: int = Field(default=0, ge=0, le=100000)
 
     # --- Telemetry (OpenTelemetry) --------------------------------------------
     # "none" is a no-op; "console" prints spans/metrics; "otlp" ships them to a
@@ -213,7 +273,17 @@ class Settings(BaseSettings):
 
     @property
     def blob_configured(self) -> bool:
-        return self.blob_connection_string is not None
+        return self.blob_connection_string is not None or bool(self.blob_account_url)
+
+    @property
+    def uses_managed_identity(self) -> bool:
+        return bool(
+            self.database_entra_auth
+            or self.blob_account_url
+            or self.redis_entra_username
+            or self.llm_entra_auth
+            or self.embedding_entra_auth
+        )
 
     @property
     def embeddings_configured(self) -> bool:
@@ -235,6 +305,54 @@ class Settings(BaseSettings):
             raise ValueError(
                 "CHUNK_OVERLAP_WORDS must be smaller than CHUNK_TARGET_WORDS"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_managed_identity(self) -> Settings:
+        if self.blob_account_url and self.blob_connection_string:
+            raise ValueError(
+                "set BLOB_ACCOUNT_URL (managed identity) or BLOB_CONNECTION_STRING, "
+                "not both"
+            )
+        if self.blob_account_url and not self.blob_account_url.startswith("https://"):
+            raise ValueError("BLOB_ACCOUNT_URL must be an https:// address")
+        if self.database_entra_auth:
+            url = self.database_url.get_secret_value() if self.database_url else ""
+            if not url:
+                raise ValueError("DATABASE_ENTRA_AUTH needs DATABASE_URL")
+            if make_url(url).password:
+                raise ValueError(
+                    "DATABASE_ENTRA_AUTH means a token is the password: remove the "
+                    "password from DATABASE_URL"
+                )
+        if self.redis_entra_username and urlsplit(self.redis_url).password:
+            raise ValueError(
+                "REDIS_ENTRA_USERNAME means a token is the password: remove the "
+                "password from REDIS_URL"
+            )
+        if self.llm_entra_auth and self.llm_api_key:
+            raise ValueError("LLM_ENTRA_AUTH and LLM_API_KEY are mutually exclusive")
+        if self.embedding_entra_auth and self.embedding_api_key:
+            raise ValueError(
+                "EMBEDDING_ENTRA_AUTH and EMBEDDING_API_KEY are mutually exclusive"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_group_overage(self) -> Settings:
+        if self.oidc_resolve_group_overage:
+            if not self.oidc_group_names:
+                raise ValueError(
+                    "OIDC_RESOLVE_GROUP_OVERAGE needs OIDC_GROUP_NAMES: Graph returns "
+                    "group object IDs, and only mapped IDs may grant access"
+                )
+            if "GroupMember.Read.All" not in self.oidc_scopes.split():
+                raise ValueError(
+                    "OIDC_RESOLVE_GROUP_OVERAGE needs GroupMember.Read.All in "
+                    "OIDC_SCOPES so the access token can call Graph"
+                )
+            if not self.graph_base_url.startswith("https://"):
+                raise ValueError("GRAPH_BASE_URL must be an https:// address")
         return self
 
     @model_validator(mode="after")

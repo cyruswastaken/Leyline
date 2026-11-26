@@ -2,6 +2,10 @@
 // The Container Apps read them through the managed identity (a Key Vault reference), so
 // no secret appears in the app's configuration, in a template or in an environment variable
 // of the deployment.
+//
+// With useManagedIdentity the data services accept the identity itself, so the only
+// secret left is the Entra client secret for sign-in: no database password, Redis key,
+// storage key or model key is created or stored anywhere.
 param keyVaultName string
 param storageAccountName string
 param redisName string
@@ -13,6 +17,7 @@ param openAiKey string
 @secure()
 param oidcClientSecret string
 param includeOidcSecret bool
+param useManagedIdentity bool = false
 
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
@@ -31,12 +36,9 @@ resource redisDb 'Microsoft.Cache/redisEnterprise/databases@2025-04-01' existing
   name: 'default'
 }
 
-var storageKey = storage.listKeys().keys[0].value
-var redisKey = redisDb.listKeys().primaryKey
-
 // ssl_context=true makes SQLAlchemy's pg8000 driver use TLS, which Azure requires.
 // The password is URL-encoded so any character is safe in the URL.
-resource databaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource databaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!useManagedIdentity) {
   parent: vault
   name: 'database-url'
   properties: {
@@ -44,23 +46,23 @@ resource databaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource redisUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource redisUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!useManagedIdentity) {
   parent: vault
   name: 'redis-url'
   properties: {
-    value: 'rediss://:${uriComponent(redisKey)}@${redis.properties.hostName}:10000/0'
+    value: 'rediss://:${uriComponent(redisDb.listKeys().primaryKey)}@${redis.properties.hostName}:10000/0'
   }
 }
 
-resource blobConnection 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource blobConnection 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!useManagedIdentity) {
   parent: vault
   name: 'blob-connection-string'
   properties: {
-    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storageKey};EndpointSuffix=${environment().suffixes.storage}'
+    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
   }
 }
 
-resource llmKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource llmKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!useManagedIdentity) {
   parent: vault
   name: 'openai-api-key'
   properties: { value: openAiKey }
