@@ -134,6 +134,17 @@ def test_the_action_group_script_keeps_the_address_out_of_the_repository():
     assert "ag-leyline" in script or "ag-leyline" in script.replace("'ag-leyline'", "")
 
 
+def test_a_missing_action_group_does_not_stop_a_deployment():
+    """On a fresh or rebuilt environment the group does not exist yet.
+
+    Windows PowerShell 5.1 under 'Stop' throws on redirected native error output, so the
+    lookup must relax the preference before it asks.
+    """
+    deploy = (ROOT / "infra" / "deploy.ps1").read_text("utf-8")
+    body = deploy.split("function Get-AlertGroupId {")[1].split("\nfunction ")[0]
+    assert body.index("$ErrorActionPreference = 'Continue'") < body.index("& az ")
+
+
 @pytest.mark.parametrize("module", ["main", "monitoring"])
 def test_alerts_are_part_of_the_template(module):
     path = (

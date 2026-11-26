@@ -51,6 +51,9 @@ function Invoke-Az {
 function Get-AlertGroupId {
     # The action group made by infra/alerts.ps1 (it holds the email address, which is not in
     # the repository). Empty when it does not exist yet: the alerts then exist but notify nobody.
+    # "Not found" is an answer here, not a failure. Windows PowerShell 5.1 turns redirected
+    # native error output into a terminating error under 'Stop', so relax it in this function only.
+    $ErrorActionPreference = 'Continue'
     $id = & az monitor action-group show --resource-group $AppResourceGroup --name ag-leyline --query id -o tsv 2>$null
     if ($LASTEXITCODE -eq 0 -and $id) { return $id.Trim() }
     return ''
