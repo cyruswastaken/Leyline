@@ -239,7 +239,7 @@ Rough effort assumes one developer working part-time. Each phase ends in a worki
 - **Demo users and access (2026-11-19):** the seven Entra demo users were recreated and the role pages and group-restricted answers were checked by the user on the live site.
 - **Answer quality on Azure (2026-11-19, `docs/EVALUATION.md`):** gpt-5.4-mini answers 0.963, cites a source and an expected document 1.000, refuses unanswerable 1.000, restricted pass 1.000, ACL leaks 0, figures supported 0.981 (the metric now understands number words). Measured against a local database loaded with the Azure embedding model, not the deployed one.
 - **Full suite:** 1,407 tests pass (2026-11-24; 1,294 at the 2026-11-19 measurement), coverage 95% overall (`services/authorization.py` at 100%).
-- **Branch ruleset on `main` (2026-11-19):** before this, `main` had no protection and no rulesets, so the scans were not required checks and `main` could be force-pushed or deleted. The ruleset "main: no force-push, checks must pass" (id 27617185) blocks deletion and force-push and requires the ten CI and Security jobs before a pull request can merge. Repository admins can bypass it (the single maintainer commits straight to `main`), so direct pushes are not checked by it; the Deploy workflow's own gate (CI and Security must have passed on the exact commit) is the backstop. The required names were compared with the real job names. **Not yet seen blocking or allowing a live PR.**
+- **Branch ruleset on `main` (2026-11-19):** before this, `main` had no protection and no rulesets, so the scans were not required checks and `main` could be force-pushed or deleted. The ruleset "main: no force-push, checks must pass" (id 27617185) blocks deletion and force-push and requires the ten CI and Security jobs before a pull request can merge. Repository admins can bypass it (the single maintainer commits straight to `main`), so direct pushes are not checked by it; the Deploy workflow's own gate (CI and Security must have passed on the exact commit) is the backstop. The required names were compared with the real job names. **Seen on a live PR on 2026-11-26** (#28): it blocked the merge while the Trivy scan failed and allowed it once every check passed. The browser tests were added the same day, making eleven required jobs.
 - **Open, by design or not yet done:** managed-identity access to Postgres, Redis, Blob and Azure OpenAI (keys still live in Key Vault; ADR 0004); first-token latency with the real model (measured, target missed: the one gate still open below); Playwright and axe in CI; three held Dependabot PRs.
 - **Original plan (kept for reference; the decisions above replace it where they differ):**
 - Bicep modules for App Service (container, web + worker on one plan), Postgres, Redis, Key Vault, Blob, AI Search, Azure OpenAI, Log Analytics, Application Insights.
@@ -258,7 +258,7 @@ question stands alone ([0010](adr/0010-skip-the-follow-up-rewrite-when-a-questio
 follow-up eval keeps recall@5 at 0.964. Real-model load test, 8 users: first token p95 3.8 s to 3.0 s. Timed from
 inside Azure (stages only) a new question reaches its first word in about 1.5 s at p95; the end-to-end figure on the
 deployed site is not measured, so the gate stays open. The a051 figure check was fixed (figures supported 1.000).
-Not done yet: the live-PR check of the ruleset, the three held Dependabot PRs, the Azure follow-up recording.
+Not done yet: the three held Dependabot PRs and the Azure follow-up recording (the ruleset was seen on a live PR on 2026-11-26).
 
 ### Phase 10: Retrieval and answer quality upgrades (2026-11-24)
 
@@ -308,8 +308,8 @@ that wait for your approval; they are Phase 12's verification).
 **Status: browser tests built and passing locally; the rest is open.**
 - **Playwright and axe** (`frontend/e2e`, `compose.e2e.yaml`, CI job "Browser tests (Playwright + axe)"): 17
   tests over real Keycloak sign-ins, permissions, upload to deletion, streaming to ticket resolution, and an
-  accessibility audit of every page. Passed locally in Microsoft Edge; the CI job has not yet run on GitHub and
-  is not yet a required check in the ruleset.
+  accessibility audit of every page. Passed locally in Microsoft Edge and on GitHub (Chromium, merged in #28 on 2026-11-26); it is
+  a required check in the `main` ruleset.
 - **Open:** the full verification (teardown, `deploy.ps1 -Seed -ManagedIdentity`, `ci-identity.ps1`, a CI deploy,
   a person's Entra sign-in and chat, evals and load test, alerts seen firing), the latency gate, and the final
   production claim.
